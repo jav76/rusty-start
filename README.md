@@ -38,7 +38,18 @@ so the UI can be iterated on without a Windows machine. Windows integration can 
 | `crates/host`     | Resident process: Slint UI, trigger handling, app index and search   |
 | `crates/protocol` | Window class and message names shared with the future explorer hook  |
 
+## Support & Distribution Model
+
+Rusty Start is developed as **convenience-ware / donationware**:
+
+- **100% Free and Open Source**: The entire codebase is freely licensed under MIT. You can build from source, inspect the code, or download standalone releases for free.
+- **Convenience Builds**: Packaged, auto-updating builds (e.g., Microsoft Store releases) are offered as convenience purchases to support active maintenance and feature development.
+- **Donations & Sponsorship**: If Rusty Start improves your daily workflow, consider sponsoring development via [GitHub Sponsors](https://github.com/sponsors/jav76).
+
 ## License
 
-MIT. Slint is used under one of its own licenses; see the Slint project for the terms that apply
-to your distribution.
+Rusty Start is licensed under the [MIT License](LICENSE).
+
+### Third-Party Licenses
+
+- **Slint**: Rusty Start's UI is built with the Slint GUI toolkit. Binaries distributed for desktop use rely on Slint's Royalty-Free Desktop and Small Business License (or GPLv3). See the [Slint project](https://slint.dev) for licensing details and options.

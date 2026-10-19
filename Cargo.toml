@@ -7,6 +7,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
+authors = ["Jaret Varn"]
+repository = "https://github.com/jav76/rusty-start"
 
 [workspace.dependencies]
 anyhow = "1.0.104"
