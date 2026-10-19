@@ -1,0 +1,77 @@
+import { LineEdit, StandardListView } from "std-widgets.slint";
+
+export component StartMenu inherits Window {
+    in-out property <string> query;
+    in property <[StandardListViewItem]> apps;
+
+    callback dismiss();
+    callback search(string);
+    callback launch(int);
+
+    /// Clears the query, restores the full list and scrolls back to the top.
+    public function reset-search() {
+        root.query = "";
+        root.search("");
+        list.set-current-item(0);
+        search.focus();
+    }
+
+    function select(index: int) {
+        list.set-current-item(max(0, min(index, root.apps.length - 1)));
+    }
+
+    title: "Rusty Start";
+    no-frame: true;
+    always-on-top: true;
+    width: 640px;
+    height: 720px;
+    forward-focus: search;
+
+    FocusScope {
+        // Capture runs before the focused search field sees the key, so these keys always reach
+        // the menu while the text cursor stays in the search field.
+        capture-key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.dismiss();
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.select(list.current-item + 1);
+                return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                root.select(list.current-item - 1);
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 16px;
+
+            search := LineEdit {
+                placeholder-text: "Search apps";
+                text <=> root.query;
+                edited(text) => {
+                    root.search(text);
+                    list.set-current-item(0);
+                }
+                accepted => {
+                    root.launch(list.current-item);
+                }
+            }
+
+            list := StandardListView {
+                vertical-stretch: 1;
+                model: root.apps;
+                current-item: 0;
+                item-pointer-event(index, event, position) => {
+                    if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left) {
+                        root.launch(index);
+                    }
+                }
+            }
+        }
+    }
+}

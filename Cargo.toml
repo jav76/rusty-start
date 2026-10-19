@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/host", "crates/protocol"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1.0.104"
+slint = { version = "1.18.1", default-features = false }
+slint-build = "1.18.1"
+windows = "0.62.2"
+rusty-start-protocol = { path = "crates/protocol" }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"
+
+# Do not set `panic = "abort"` here. Profiles apply to every crate in the workspace, and the
+# future explorer hook DLL relies on unwinding so `catch_unwind` can keep panics out of explorer.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
