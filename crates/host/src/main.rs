@@ -3,6 +3,9 @@
 
 mod app_list;
 mod apps;
+mod backdrop;
+mod config;
+mod glass;
 mod menu;
 mod search;
 mod trigger;

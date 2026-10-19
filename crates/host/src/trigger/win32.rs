@@ -1,12 +1,14 @@
-//! Windows trigger: a hidden window on a dedicated thread.
+//! Windows trigger: a hidden window and low-level keyboard hook on a dedicated thread.
 //!
 //! The window is top-level rather than message-only (`HWND_MESSAGE`) because only top-level
 //! windows receive the `TaskbarCreated` broadcast, which the host will need to re-inject the
 //! hook after explorer restarts.
 //!
-//! Trigger messages are always posted, so the message loop handles them directly and the window
-//! procedure stays stateless.
+//! When `use_win_key` is enabled in `config.toml` (the default), the trigger thread also installs a
+//! `WH_KEYBOARD_LL` hook that opens `rusty-start` on a solo Windows-key tap (`VK_LWIN` / `VK_RWIN`
+//! released without any other key pressed) while preserving all `Win+<Key>` system shortcuts.
 
+use std::cell::Cell;
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
@@ -16,19 +18,101 @@ use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey, VK_SPACE,
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
+    RegisterHotKey, SendInput, UnregisterHotKey, VK_LWIN, VK_NONAME, VK_RWIN, VK_SPACE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, MSG, PostThreadMessageW,
-    RegisterClassExW, RegisterWindowMessageW, UnregisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_HOTKEY, WM_QUIT,
-    WNDCLASSEXW,
+    CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, HC_ACTION, HHOOK,
+    KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLKHF_UP, MSG, PostMessageW, PostThreadMessageW, RegisterClassExW,
+    RegisterWindowMessageW, SetWindowsHookExW, UnhookWindowsHookEx, UnregisterClassW, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSEXW,
 };
 use windows::core::{HSTRING, PCWSTR};
 
-/// Identifies the development hotkey, Ctrl+Alt+Space, which stands in for the explorer hook.
+use crate::config::Config;
+
+/// Identifies the fallback development hotkey, Ctrl+Alt+Space.
 const DEV_HOTKEY_ID: i32 = 1;
 
-/// Keeps the trigger thread running. Dropping it stops the thread and releases the hotkey.
+thread_local! {
+    static HOOK_STATE: Cell<HookState> = const { Cell::new(HookState::new()) };
+}
+
+#[derive(Clone, Copy)]
+struct HookState {
+    hwnd: HWND,
+    toggle_message: u32,
+    chord: WinKeyChord,
+}
+
+impl HookState {
+    const fn new() -> Self {
+        Self { hwnd: HWND(std::ptr::null_mut()), toggle_message: 0, chord: WinKeyChord::new() }
+    }
+}
+
+/// Tracks whether `VK_LWIN` or `VK_RWIN` was tapped alone without any modifier or chord key.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct WinKeyChord {
+    win_held: bool,
+    chord_interrupted: bool,
+    held_modifiers: u16,
+}
+
+impl WinKeyChord {
+    const fn new() -> Self {
+        Self { win_held: false, chord_interrupted: false, held_modifiers: 0 }
+    }
+
+    /// Processes a non-injected key event and returns `true` when a solo Windows key tap completes
+    /// on key release.
+    fn on_key_event(&mut self, vk: u16, is_key_up: bool) -> bool {
+        if vk == VK_LWIN.0 || vk == VK_RWIN.0 {
+            if !is_key_up {
+                if !self.win_held {
+                    self.win_held = true;
+                    self.chord_interrupted = self.held_modifiers != 0;
+                }
+                false
+            } else {
+                let should_toggle: bool = self.win_held && !self.chord_interrupted;
+                self.win_held = false;
+                self.chord_interrupted = false;
+                should_toggle
+            }
+        } else {
+            if let Some(bit) = modifier_bit(vk) {
+                if is_key_up {
+                    self.held_modifiers &= !bit;
+                } else {
+                    self.held_modifiers |= bit;
+                }
+            }
+
+            if self.win_held {
+                self.chord_interrupted = true;
+            }
+            false
+        }
+    }
+}
+
+const fn modifier_bit(vk: u16) -> Option<u16> {
+    match vk {
+        0x10 => Some(1 << 0), // VK_SHIFT
+        0x11 => Some(1 << 1), // VK_CONTROL
+        0x12 => Some(1 << 2), // VK_MENU (Alt)
+        0xA0 => Some(1 << 3), // VK_LSHIFT
+        0xA1 => Some(1 << 4), // VK_RSHIFT
+        0xA2 => Some(1 << 5), // VK_LCONTROL
+        0xA3 => Some(1 << 6), // VK_RCONTROL
+        0xA4 => Some(1 << 7), // VK_LMENU
+        0xA5 => Some(1 << 8), // VK_RMENU
+        _ => None,
+    }
+}
+
+/// Keeps the trigger thread running. Dropping it stops the thread and releases the hotkey and hook.
 pub struct TriggerGuard {
     thread_id: u32,
     thread: Option<JoinHandle<()>>,
@@ -111,10 +195,12 @@ fn run_message_loop(window: &TriggerWindow, on_toggle: impl Fn()) {
     }
 }
 
-/// Hidden window that owns the hotkey registration. Must stay on the thread that created it.
+/// Hidden window that owns the hotkey and optional `WH_KEYBOARD_LL` Windows-key hook. Must stay on
+/// the thread that created it.
 struct TriggerWindow {
     hwnd: HWND,
     toggle_message: u32,
+    keyboard_hook: Option<HHOOK>,
     // Declared last so the class is unregistered only after Drop has destroyed the window.
     _class: WindowClass,
 }
@@ -124,7 +210,26 @@ impl TriggerWindow {
         let toggle_message: u32 = register_toggle_message()?;
         let class: WindowClass = WindowClass::register(MESSAGE_WINDOW_CLASS)?;
         let hwnd: HWND = create_hidden_window(&class)?;
-        let window = Self { hwnd, toggle_message, _class: class };
+
+        HOOK_STATE.with(|cell| {
+            cell.set(HookState { hwnd, toggle_message, chord: WinKeyChord::new() });
+        });
+
+        let keyboard_hook: Option<HHOOK> = if Config::load().use_win_key {
+            // SAFETY: `keyboard_hook_proc` is a valid `WH_KEYBOARD_LL` procedure and this thread
+            // pumps messages in `run_message_loop` until `TriggerWindow` drops.
+            match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) } {
+                Ok(hook) => Some(hook),
+                Err(error) => {
+                    eprintln!("failed to install the Windows-key hook, falling back to Ctrl+Alt+Space: {error}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let window = Self { hwnd, toggle_message, keyboard_hook, _class: class };
 
         // SAFETY: `window.hwnd` is a live window owned by this thread.
         let hotkey = unsafe {
@@ -154,12 +259,76 @@ impl TriggerWindow {
 impl Drop for TriggerWindow {
     fn drop(&mut self) {
         // SAFETY: Drop runs on the creating thread because TriggerWindow never leaves it.
-        // Failures are ignored: the hotkey may never have been registered.
+        // Failures are ignored: the hook or hotkey may never have been registered.
         unsafe {
+            if let Some(hook) = self.keyboard_hook.take() {
+                let _ = UnhookWindowsHookEx(hook);
+            }
             let _ = UnregisterHotKey(Some(self.hwnd), DEV_HOTKEY_ID);
             let _ = DestroyWindow(self.hwnd);
         }
     }
+}
+
+/// Low-level keyboard hook that detects a solo Windows-key tap (`VK_LWIN` / `VK_RWIN`), injects a
+/// silent `VK_NONAME` key event so `explorer.exe` suppresses the built-in Windows 11 Start menu,
+/// and posts the toggle message to `TriggerWindow`.
+unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code == HC_ACTION as i32 && lparam.0 != 0 {
+        // SAFETY: when `code == HC_ACTION`, Windows passes a valid pointer to `KBDLLHOOKSTRUCT` in `lparam`.
+        let kb: &KBDLLHOOKSTRUCT = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
+
+        // Ignore synthetic keystrokes (including our own `VK_NONAME` mask injection below).
+        if !kb.flags.contains(LLKHF_INJECTED) {
+            let msg: u32 = wparam.0 as u32;
+            let is_key_event: bool = matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP);
+
+            if is_key_event && let Ok(vk) = u16::try_from(kb.vkCode) {
+                let is_key_up: bool = matches!(msg, WM_KEYUP | WM_SYSKEYUP) || kb.flags.contains(LLKHF_UP);
+
+                let should_toggle: Option<(HWND, u32)> = HOOK_STATE.with(|cell| {
+                    let mut state = cell.get();
+                    let triggered = state.chord.on_key_event(vk, is_key_up);
+                    cell.set(state);
+                    triggered.then_some((state.hwnd, state.toggle_message))
+                });
+
+                if let Some((hwnd, toggle_message)) = should_toggle {
+                    suppress_native_start_menu();
+                    // SAFETY: `hwnd` belongs to `TriggerWindow` on this thread and `toggle_message`
+                    // is the registered `RustyStart.ToggleMenu` message ID.
+                    let _ = unsafe { PostMessageW(Some(hwnd), toggle_message, WPARAM(0), LPARAM(0)) };
+                }
+            }
+        }
+    }
+
+    // SAFETY: always forwards the event along the hook chain so `VK_LWIN`/`VK_RWIN` key-up is
+    // delivered to the OS and the Windows modifier never gets stuck down.
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// Sends a silent `VK_NONAME` (`0xFC`) key-down and key-up before the `VK_LWIN` / `VK_RWIN`
+/// release reaches `explorer.exe`, convincing Windows that a `Win+<Key>` chord occurred so it
+/// does not open the built-in Start menu.
+fn suppress_native_start_menu() {
+    let inputs: [INPUT; 2] = [
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT { wVk: VK_NONAME, dwFlags: KEYBD_EVENT_FLAGS(0), ..Default::default() },
+            },
+        },
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT { wVk: VK_NONAME, dwFlags: KEYEVENTF_KEYUP, ..Default::default() },
+            },
+        },
+    ];
+
+    // SAFETY: `inputs` is a valid slice of two `INPUT` structs with `cbsize` matching `size_of::<INPUT>()`.
+    let _ = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
 }
 
 /// Registered window class, unregistered on drop.
@@ -235,4 +404,55 @@ fn register_toggle_message() -> Result<u32> {
 extern "system" fn window_procedure(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     // SAFETY: forwards the arguments Windows passed to this procedure unchanged.
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LWIN: u16 = VK_LWIN.0;
+    const RWIN: u16 = VK_RWIN.0;
+    const KEY_R: u16 = 0x52;
+    const LCTRL: u16 = 0xA2;
+
+    #[test]
+    fn solo_windows_key_tap_triggers_on_release() {
+        let mut chord = WinKeyChord::new();
+
+        assert!(!chord.on_key_event(LWIN, false));
+        assert!(chord.on_key_event(LWIN, true));
+    }
+
+    #[test]
+    fn auto_repeated_solo_windows_key_still_triggers_on_release() {
+        let mut chord = WinKeyChord::new();
+
+        assert!(!chord.on_key_event(RWIN, false));
+        assert!(!chord.on_key_event(RWIN, false));
+        assert!(chord.on_key_event(RWIN, true));
+    }
+
+    #[test]
+    fn win_plus_key_chord_does_not_trigger_menu() {
+        let mut chord = WinKeyChord::new();
+
+        assert!(!chord.on_key_event(LWIN, false));
+        assert!(!chord.on_key_event(KEY_R, false));
+        assert!(!chord.on_key_event(KEY_R, true));
+        assert!(!chord.on_key_event(LWIN, true));
+    }
+
+    #[test]
+    fn holding_modifier_before_pressing_win_does_not_trigger_menu() {
+        let mut chord = WinKeyChord::new();
+
+        assert!(!chord.on_key_event(LCTRL, false));
+        assert!(!chord.on_key_event(LWIN, false));
+        assert!(!chord.on_key_event(LWIN, true));
+        assert!(!chord.on_key_event(LCTRL, true));
+
+        // Subsequent solo tap after releasing Ctrl works normally.
+        assert!(!chord.on_key_event(LWIN, false));
+        assert!(chord.on_key_event(LWIN, true));
+    }
 }
