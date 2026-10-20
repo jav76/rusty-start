@@ -184,6 +184,12 @@ impl AppList {
         self.refresh();
     }
 
+    /// Replaces the power actions offered in search results.
+    pub fn set_power_actions(&self, actions: Vec<PowerAction>) {
+        self.state.borrow_mut().catalog.power = Index::new(actions);
+        self.refresh();
+    }
+
     pub fn set_usage(&self, usage: Usage) {
         self.state.borrow_mut().catalog.usage = usage;
         self.refresh();

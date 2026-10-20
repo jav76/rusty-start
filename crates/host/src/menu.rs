@@ -72,6 +72,8 @@ struct MenuController {
     dismissed_by_deactivation_at: Option<Instant>,
     /// Rebuilt app index waiting for the next show, so the list never changes under the cursor.
     pending_apps: Option<Vec<App>>,
+    /// Power actions in power flyout order. The flyout reports clicks by index into this list.
+    power_actions: Vec<PowerAction>,
 }
 
 impl MenuController {
@@ -87,6 +89,7 @@ impl MenuController {
             timer: Timer::default(),
             dismissed_by_deactivation_at: None,
             pending_apps: None,
+            power_actions: PowerAction::ALL.to_vec(),
         }
     }
 }
@@ -97,8 +100,7 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
         .ok();
     start_menu.set_rows(ModelRc::from(Rc::new(AppList::new(writer))));
 
-    let power_labels: Vec<SharedString> = PowerAction::ALL.iter().map(|action| action.label().into()).collect();
-    start_menu.set_power_labels(ModelRc::from(Rc::new(VecModel::from(power_labels))));
+    set_power_actions(start_menu, PowerAction::ALL.to_vec());
 
     CONTROLLER.with(|cell| {
         let controller = cell.borrow();
@@ -163,7 +165,9 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
     start_menu.on_power(move |index| {
         if let Some(start_menu) = weak_menu.upgrade()
-            && let Some(&action) = usize::try_from(index).ok().and_then(|index| PowerAction::ALL.get(index))
+            && let Some(action) = usize::try_from(index)
+                .ok()
+                .and_then(|index| CONTROLLER.with(|cell| cell.borrow().power_actions.get(index).copied()))
         {
             perform_power_action(&start_menu, action);
         }
@@ -240,11 +244,14 @@ pub fn load_apps_in_background(start_menu: &StartMenu) -> anyhow::Result<()> {
             let apps: Vec<App> = apps::load()
                 .inspect_err(|error| eprintln!("failed to load the app list: {error:#}"))
                 .unwrap_or_default();
+            let power_actions: Vec<PowerAction> = power::available();
             eprintln!("loaded the app index ({} apps) in {} ms", apps.len(), started_at.elapsed().as_millis());
             let icon_apps: Vec<App> = apps.clone();
 
-            let delivered =
-                weak_menu.upgrade_in_event_loop(move |start_menu| set_initial_data(&start_menu, apps, usage));
+            let delivered = weak_menu.upgrade_in_event_loop(move |start_menu| {
+                set_initial_data(&start_menu, apps, usage);
+                set_power_actions(&start_menu, power_actions);
+            });
             if let Err(error) = delivered {
                 eprintln!("failed to deliver the app list: {error}");
                 return;
@@ -255,6 +262,14 @@ pub fn load_apps_in_background(start_menu: &StartMenu) -> anyhow::Result<()> {
         .context("failed to spawn the app index thread")?;
 
     Ok(())
+}
+
+/// Shows `actions` in the power flyout and search results.
+fn set_power_actions(start_menu: &StartMenu, actions: Vec<PowerAction>) {
+    let labels: Vec<SharedString> = actions.iter().map(|action| action.label().into()).collect();
+    start_menu.set_power_labels(ModelRc::from(Rc::new(VecModel::from(labels))));
+    AppList::with(start_menu, |app_list| app_list.set_power_actions(actions.clone()));
+    CONTROLLER.with(|cell| cell.borrow_mut().power_actions = actions);
 }
 
 fn set_initial_data(start_menu: &StartMenu, apps: Vec<App>, usage: anyhow::Result<Usage>) {

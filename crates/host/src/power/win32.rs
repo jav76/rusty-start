@@ -19,6 +19,11 @@ use windows::core::{Owned, PCWSTR};
 
 use super::PowerAction;
 
+/// Windows offers every action to every account.
+pub fn available() -> Vec<PowerAction> {
+    PowerAction::ALL.to_vec()
+}
+
 /// Runs `action` on a short-lived thread, because suspending blocks until the computer wakes.
 pub fn perform(action: PowerAction) {
     let spawned = thread::Builder::new().name("rusty-start-power".into()).spawn(move || {

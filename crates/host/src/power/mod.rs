@@ -1,17 +1,22 @@
 //! Lock, sign out, sleep, restart and shut down, offered in the power flyout and as search results.
 //!
-//! On Windows they call the session and power APIs. On other platforms they only log, so preview
-//! builds never end the developer's session.
+//! On Windows they call the session and power APIs; on Linux the desktop's session manager and
+//! logind. Preview builds only log, so they never end the developer's session.
 
 #[cfg(backend_win32)]
 mod win32;
 #[cfg(backend_win32)]
-pub use win32::perform;
+pub use win32::{available, perform};
 
-#[cfg(not(backend_win32))]
+#[cfg(backend_linux)]
+mod linux;
+#[cfg(backend_linux)]
+pub use linux::{available, perform};
+
+#[cfg(backend_preview)]
 mod preview;
-#[cfg(not(backend_win32))]
-pub use preview::perform;
+#[cfg(backend_preview)]
+pub use preview::{available, perform};
 
 use crate::search::Searchable;
 
