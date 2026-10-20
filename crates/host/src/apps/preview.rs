@@ -1,3 +1,5 @@
+#![expect(clippy::unnecessary_wraps, reason = "signatures match the fallible win32 backend")]
+
 use slint::Rgba8Pixel;
 
 use super::{App, ICON_SIZE, IconPixels};

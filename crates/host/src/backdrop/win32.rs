@@ -11,6 +11,7 @@ use std::slice;
 
 use anyhow::{Context, Result, bail};
 use slint::winit_030::winit::platform::windows::{CornerPreference, WindowAttributesExtWindows};
+use slint::{PhysicalPosition, PhysicalSize};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_TRANSITIONS_FORCEDISABLED, DwmSetWindowAttribute,
@@ -34,10 +35,21 @@ use super::{MonitorRect, MonitorSnapshot};
 #[derive(Default)]
 pub struct Capturer {
     surface: Option<DibSurface>,
+    ready: Option<Result<MonitorSnapshot>>,
 }
 
 impl Capturer {
-    pub fn capture_active_monitor(&mut self) -> Result<MonitorSnapshot> {
+    /// Captures synchronously: a GDI `BitBlt` takes 1-2 ms, so `poll_capture` returns the result on
+    /// the next call.
+    pub fn start_capture(&mut self) {
+        self.ready = Some(self.capture_active_monitor());
+    }
+
+    pub fn poll_capture(&mut self) -> Option<Result<MonitorSnapshot>> {
+        self.ready.take()
+    }
+
+    fn capture_active_monitor(&mut self) -> Result<MonitorSnapshot> {
         let rect: MonitorRect = active_monitor_rect()?;
 
         let needs_recreate: bool =
@@ -148,8 +160,26 @@ pub fn install_backend() -> Result<OverlayOwner> {
     Ok(owner)
 }
 
+/// The overlay is sized from the captured monitor, not from window resize events.
+pub const OVERLAY_FOLLOWS_WINDOW_SIZE: bool = false;
+
+/// Covers the monitor with the overlay, one physical pixel narrower than the monitor. A borderless
+/// window that covers the whole monitor and holds the foreground is treated as fullscreen, and
+/// switching into that mode flashes the display black. The glass renderer keeps its full-monitor
+/// viewport, so only the rightmost column goes undrawn and every other pixel stays aligned with the
+/// desktop snapshot.
+pub fn place_overlay_window(window: &slint::Window, rect: MonitorRect) {
+    window.set_position(PhysicalPosition::new(rect.x, rect.y));
+    window.set_size(PhysicalSize::new(rect.width.saturating_sub(1).max(1), rect.height));
+}
+
 /// Turns off DWM open/close transitions and the Windows 11 accent border on the overlay. These
 /// attributes survive winit's style rewrites, so this never changes the window frame.
+/// The overlay is not fullscreen on this backend, so it never needs restoring.
+pub fn keep_overlay_fullscreen(_window: &slint::Window) -> bool {
+    true
+}
+
 pub fn configure_overlay_window() {
     let Some(hwnd) = find_overlay_hwnd_on_current_thread() else {
         return;

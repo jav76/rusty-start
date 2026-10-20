@@ -12,11 +12,21 @@ repository.workspace = true
 name = "rusty-start"
 path = "src/main.rs"
 
+[features]
+# Forces the preview backend (sample apps, synthetic backdrop, logged power actions) on any OS.
+preview = []
+
 [dependencies]
 anyhow.workspace = true
 glow.workspace = true
 rusty-start-protocol.workspace = true
 slint = { workspace = true, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "accessibility", "unstable-winit-030"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+png.workspace = true
+resvg.workspace = true
+rustix.workspace = true
+zbus.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [
@@ -43,3 +53,21 @@ slint-build.workspace = true
 
 [lints]
 workspace = true
+
+# `cargo deb -p rusty-start-host` builds the Linux package. The binary goes to the path the desktop
+# entry and D-Bus service name, because KWin authorizes screenshots by executable path.
+[package.metadata.deb]
+name = "rusty-start"
+section = "x11"
+priority = "optional"
+depends = "$auto"
+extended-description = """\
+A fast app launcher for KDE Plasma on Wayland, opened with the Meta key. It lists installed apps \
+with pinned and recent apps first, searches as you type, and offers lock, sign out, sleep, \
+restart and shut down. Run `rusty-start setup` once per user to bind the Meta key."""
+assets = [
+    ["target/release/rusty-start", "usr/bin/", "755"],
+    ["../../packaging/linux/io.github.jav76.RustyStart.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/linux/io.github.jav76.RustyStart.service", "usr/share/dbus-1/services/", "644"],
+    ["../../README.md", "usr/share/doc/rusty-start/", "644"],
+]

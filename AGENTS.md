@@ -6,15 +6,21 @@ conflicts with a tool, fix the tool config instead of working around it.
 
 ## Commands
 
-Run all three before calling a change done. CI runs the same commands on `windows-latest`.
+Run these before calling a change done. CI runs them in a `debian:bookworm` container on the
+project's self-hosted Linux runner, and checks the Windows backend with
+`cargo clippy --target x86_64-pc-windows-msvc`. Windows-only tests run only on Windows, so run
+`cargo test --workspace --locked` there for changes to Windows code.
 
 ```
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy -p rusty-start-host --all-targets --locked --features preview -- -D warnings
 cargo test --workspace --locked
 ```
 
-- `cargo run -p rusty-start-host` runs the host. On Linux it builds in preview mode.
+- `cargo run -p rusty-start-host` runs the host. Add `--features preview` to run the preview
+  backend (sample apps, synthetic backdrop, logged power actions) on any OS.
+- Linux builds need `pkg-config` and `libfontconfig-dev`.
 - Formatting comes from `rustfmt.toml`, `.editorconfig` and `.gitattributes` (LF everywhere).
   Use stable rustfmt only, with no nightly-only options.
 - Lints are configured once in the root `Cargo.toml` under `[workspace.lints]`. Every crate opts
@@ -29,6 +35,7 @@ cargo test --workspace --locked
 | `crates/hook`              | DLL injected into `explorer.exe`. Treat it as hostile territory       |
 | `crates/protocol`          | Names and shared-memory layout used by both host and hook             |
 | `docs/adr`                 | Architecture Decision Records                                         |
+| `packaging/linux`          | Desktop entry and D-Bus service file the `.deb` installs              |
 | `GLOSSARY.md`              | Domain terms. Use them in code, comments and docs                     |
 
 ## Rust
@@ -66,9 +73,15 @@ cargo test --workspace --locked
   `///` doc comment when their contract is not obvious from the name and signature.
 
 **Structure**
-- Platform-specific code follows the existing split: `mod.rs` re-exports from `win32.rs` under
-  `cfg(windows)` and from `preview.rs` otherwise, with identical public APIs. Keep the preview
-  side compiling and behaving plausibly so the UI can be developed on Linux.
+- Platform-specific code follows the existing split: `mod.rs` re-exports from `win32.rs`,
+  `linux.rs` or `preview.rs` with identical public APIs, selected by the `backend_win32`,
+  `backend_linux` and `backend_preview` cfgs that `crates/host/build.rs` emits. The `preview`
+  feature forces `backend_preview` on any OS. Use `cfg(windows)` only for code that depends on the
+  OS rather than the backend (for example the config folder). Keep the preview side compiling and
+  behaving plausibly so the UI can be developed without desktop integration.
+- On Linux, probe each capability at runtime (a D-Bus name, a protocol, an authorization) and give
+  it a defined fallback. One binary serves every desktop; never branch on `XDG_CURRENT_DESKTOP`
+  except to choose setup text or log messages.
 - Pure logic (search ranking, config parsing, geometry) stays platform-independent and unit
   tested. Push Win32 calls to the edges.
 - Functions that must run on the UI thread say so in their module or item docs. Hand work back

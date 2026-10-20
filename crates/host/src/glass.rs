@@ -11,6 +11,7 @@
 use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::time::Instant;
 
 use anyhow::{Result, bail};
 use glow::{
@@ -27,6 +28,9 @@ use crate::config::{CARD_HEIGHT, CARD_WIDTH, Config};
 /// callback during `RenderingState::BeforeRendering`.
 pub struct GlassState {
     pub pending_snapshot: Option<MonitorSnapshot>,
+    /// Draw this open as Plain Glass: no desktop snapshot arrived, so the veil and card are tinted
+    /// over the live desktop without blur or refraction.
+    pub plain: bool,
     pub progress: f32,
     pub zero_frame_presented: bool,
     pub monitor_rect: MonitorRect,
@@ -34,12 +38,16 @@ pub struct GlassState {
     pub viewport_px: [f32; 2],
     pub scale_factor: f32,
     pub config: Config,
+    /// When the menu last started to show. Debug builds, and builds run with `RUSTY_START_TRACE_OPEN`
+    /// set, log the time to its first visible frame.
+    pub shown_at: Option<Instant>,
 }
 
 impl Default for GlassState {
     fn default() -> Self {
         Self {
             pending_snapshot: None,
+            plain: false,
             progress: 0.0,
             zero_frame_presented: false,
             monitor_rect: MonitorRect { x: 0, y: 0, width: 1440, height: 900 },
@@ -47,6 +55,7 @@ impl Default for GlassState {
             viewport_px: [1440.0, 900.0],
             scale_factor: 1.0,
             config: Config::default(),
+            shown_at: None,
         }
     }
 }
@@ -72,6 +81,19 @@ impl GlassState {
 pub fn compute_card_rect_px(logical_x: f32, logical_y: f32, scale_factor: f32) -> [f32; 4] {
     let scale: f32 = scale_factor.max(0.5);
     [logical_x * scale, logical_y * scale, CARD_WIDTH * scale, CARD_HEIGHT * scale]
+}
+
+fn log_first_visible_frame(state: &mut GlassState) {
+    if (cfg!(debug_assertions) || std::env::var_os("RUSTY_START_TRACE_OPEN").is_some())
+        && state.progress > 0.0
+        && let Some(shown_at) = state.shown_at.take()
+    {
+        eprintln!(
+            "first visible frame {:.1} ms after show, at progress {:.2}",
+            shown_at.elapsed().as_secs_f64() * 1000.0,
+            state.progress
+        );
+    }
 }
 
 /// Cubic-out easing curve used for both the `180ms` Optical Condense and `100ms` dismiss transitions.
@@ -111,6 +133,7 @@ pub fn install_rendering_notifier(start_menu: &StartMenu, state: Rc<RefCell<Glas
                     }
 
                     active_renderer.render_frame(&mut borrowed);
+                    log_first_visible_frame(&mut borrowed);
                 }
             }
             RenderingState::AfterRendering => {}
@@ -143,6 +166,7 @@ struct CompositeUniforms {
     card_rect: Option<UniformLocation>,
     progress: Option<UniformLocation>,
     dpi: Option<UniformLocation>,
+    plain: Option<UniformLocation>,
 }
 
 struct RenderTarget {
@@ -217,6 +241,7 @@ impl GlassRenderer {
                 card_rect: gl.get_uniform_location(composite_prog, "u_card_rect"),
                 progress: gl.get_uniform_location(composite_prog, "u_progress"),
                 dpi: gl.get_uniform_location(composite_prog, "u_dpi"),
+                plain: gl.get_uniform_location(composite_prog, "u_plain"),
             };
 
             Ok(Self {
@@ -265,9 +290,7 @@ impl GlassRenderer {
                 // `BeforeRendering`, so leaving the backbuffer untouched presents a 100%
                 // transparent frame over the live desktop.
                 state.zero_frame_presented = true;
-            } else if self.has_desktop_tex
-                && let Some(pyramid) = &self.pyramid
-            {
+            } else if let Some(textures) = self.composite_textures(state.plain) {
                 state.zero_frame_presented = false;
                 let vp_w: i32 = (state.viewport_px[0] as i32).max(1);
                 let vp_h: i32 = (state.viewport_px[1] as i32).max(1);
@@ -276,22 +299,24 @@ impl GlassRenderer {
                 gl.viewport(0, 0, vp_w, vp_h);
                 gl.use_program(Some(self.composite_prog));
 
+                let [fog, deep, sharp, mild] = textures;
                 gl.active_texture(glow::TEXTURE0);
-                gl.bind_texture(glow::TEXTURE_2D, Some(pyramid.up_half.tex));
+                gl.bind_texture(glow::TEXTURE_2D, Some(fog));
                 gl.uniform_1_i32(self.composite_uniforms.blur_fog.as_ref(), 0);
 
                 gl.active_texture(glow::TEXTURE1);
-                gl.bind_texture(glow::TEXTURE_2D, Some(pyramid.up_quarter.tex));
+                gl.bind_texture(glow::TEXTURE_2D, Some(deep));
                 gl.uniform_1_i32(self.composite_uniforms.blur_deep.as_ref(), 1);
 
                 gl.active_texture(glow::TEXTURE2);
-                gl.bind_texture(glow::TEXTURE_2D, Some(self.desktop_tex));
+                gl.bind_texture(glow::TEXTURE_2D, Some(sharp));
                 gl.uniform_1_i32(self.composite_uniforms.sharp.as_ref(), 2);
 
                 gl.active_texture(glow::TEXTURE3);
-                gl.bind_texture(glow::TEXTURE_2D, Some(pyramid.down_half.tex));
+                gl.bind_texture(glow::TEXTURE_2D, Some(mild));
                 gl.uniform_1_i32(self.composite_uniforms.blur_mild.as_ref(), 3);
 
+                gl.uniform_1_f32(self.composite_uniforms.plain.as_ref(), if state.plain { 1.0 } else { 0.0 });
                 gl.uniform_2_f32(self.composite_uniforms.resolution.as_ref(), vp_w as f32, vp_h as f32);
                 gl.uniform_4_f32(
                     self.composite_uniforms.card_rect.as_ref(),
@@ -333,6 +358,16 @@ impl GlassRenderer {
                 gl.enable(glow::STENCIL_TEST);
             }
         }
+    }
+
+    /// Textures bound as `[fog, deep, sharp, mild]`, or `None` when there is nothing to draw. Plain
+    /// Glass samples none of them, so the desktop texture stands in for every slot.
+    fn composite_textures(&self, plain: bool) -> Option<[Texture; 4]> {
+        if plain {
+            return Some([self.desktop_tex; 4]);
+        }
+        let pyramid: &BlurPyramid = self.pyramid.as_ref().filter(|_| self.has_desktop_tex)?;
+        Some([pyramid.up_half.tex, pyramid.up_quarter.tex, self.desktop_tex, pyramid.down_half.tex])
     }
 
     fn upload_and_blur_snapshot(&mut self, snapshot: &MonitorSnapshot) {
@@ -663,6 +698,13 @@ uniform vec2 u_resolution;
 uniform vec4 u_card_rect;
 uniform float u_progress;
 uniform float u_dpi;
+// 1.0 draws Plain Glass: no snapshot, so the Fog Veil and Liquid-Glass Card are tinted over the
+// live desktop the transparent window shows, without blur or refraction.
+uniform float u_plain;
+
+const float PLAIN_VEIL_OPACITY = 0.55;
+const float PLAIN_CARD_OPACITY = 0.92;
+const vec3 PLAIN_GLASS_BASE = vec3(0.07, 0.09, 0.15);
 
 float sd_rounded_box(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + vec2(r);
@@ -709,6 +751,11 @@ void main() {
     // The veil turns opaque while it still shows the unblurred snapshot, which matches the live
     //    desktop, so the handoff between the two is invisible in both directions.
     float veil_alpha = smoothstep(0.0, 0.1, ease);
+    bool plain = u_plain > 0.5;
+    if (plain) {
+        outer_fog = mist_tint;
+        veil_alpha = PLAIN_VEIL_OPACITY * ease;
+    }
 
     // 2. Floating 640x720 Liquid-Glass Card SDF geometry (in top-left physical coordinates).
     vec2 frag_tl = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
@@ -758,6 +805,11 @@ void main() {
             texture(u_blur_fog, uv_b).b
         );
 
+        if (plain) {
+            refracted_deep = PLAIN_GLASS_BASE;
+            refracted_edge = PLAIN_GLASS_BASE;
+        }
+
         // Clearer lens refraction near the curved bevel, deep velvety frost inside the card body.
         vec3 glass_color = mix(refracted_deep, refracted_edge, lens_curve * 0.65);
 
@@ -791,8 +843,9 @@ void main() {
         glass_color += vec3(grain);
 
         float card_mask = smoothstep(0.75, -0.75, dist) * clamp(ease * 1.15, 0.0, 1.0);
-        premul_out = mix(premul_out, glass_color, card_mask);
-        alpha_out = mix(alpha_out, 1.0, card_mask);
+        float card_opacity = plain ? PLAIN_CARD_OPACITY : 1.0;
+        premul_out = mix(premul_out, glass_color * card_opacity, card_mask);
+        alpha_out = mix(alpha_out, card_opacity, card_mask);
     }
 
     frag_color = vec4(premul_out, alpha_out);
@@ -803,34 +856,39 @@ void main() {
 mod tests {
     use super::*;
 
+    fn assert_close(actual: &[f32], expected: &[f32]) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual_value, expected_value) in actual.iter().zip(expected) {
+            assert!((actual_value - expected_value).abs() < 1e-5, "{actual:?} != {expected:?}");
+        }
+    }
+
     #[test]
     fn cubic_out_interpolates_monotonically_between_zero_and_one() {
-        assert_eq!(cubic_out(0.0), 0.0);
-        assert_eq!(cubic_out(1.0), 1.0);
+        assert_close(&[cubic_out(0.0), cubic_out(1.0)], &[0.0, 1.0]);
         assert!(cubic_out(0.25) > 0.25);
         assert!(cubic_out(0.5) > cubic_out(0.25));
-        assert_eq!(cubic_out(-1.0), 0.0);
-        assert_eq!(cubic_out(2.0), 1.0);
+        assert_close(&[cubic_out(-1.0), cubic_out(2.0)], &[0.0, 1.0]);
     }
 
     #[test]
     fn computes_physical_card_rectangle_for_hidpi_scale() {
         let rect = compute_card_rect_px(48.0, 90.0, 1.5);
 
-        assert_eq!(rect, [72.0, 135.0, 960.0, 1080.0]);
+        assert_close(&rect, &[72.0, 135.0, 960.0, 1080.0]);
     }
 
     #[test]
     fn glass_state_starts_transparent_and_locks_viewport_to_monitor_rect() {
         let mut state = GlassState::default();
-        assert_eq!(state.progress, 0.0);
+        assert_close(&[state.progress], &[0.0]);
         assert!(!state.zero_frame_presented);
 
         let monitor = MonitorRect { x: -1920, y: 0, width: 2560, height: 1440 };
         state.update_geometry(monitor, 1.25, Config::default());
 
         assert_eq!(state.monitor_rect, monitor);
-        assert_eq!(state.viewport_px, [2560.0, 1440.0]);
-        assert_eq!(state.scale_factor, 1.25);
+        assert_close(&state.viewport_px, &[2560.0, 1440.0]);
+        assert_close(&[state.scale_factor], &[1.25]);
     }
 }

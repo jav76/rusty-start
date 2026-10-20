@@ -1,17 +1,32 @@
 //! Discovers installed apps, renders their icons and launches them.
 //!
 //! On Windows the list comes from the shell's Applications folder, which is what the built-in
-//! Start menu shows. On other platforms a fixed sample list stands in so the UI can be iterated on.
+//! Start menu shows. On Linux it comes from the freedesktop Desktop Entry files that desktop
+//! launchers list. Preview builds use a fixed sample list so the UI can be iterated on.
 
-#[cfg(windows)]
+#[cfg(backend_win32)]
 mod win32;
-#[cfg(windows)]
+#[cfg(backend_win32)]
 pub use win32::{AppWatcher, launch, load, load_icons, watch};
 
-#[cfg(not(windows))]
+#[cfg(backend_linux)]
+mod linux;
+#[cfg(backend_linux)]
+pub use linux::{AppWatcher, launch, load, load_icons, watch};
+
+#[cfg(backend_preview)]
 mod preview;
-#[cfg(not(windows))]
+#[cfg(backend_preview)]
 pub use preview::{AppWatcher, launch, load, load_icons, watch};
+
+#[cfg(any(backend_linux, test))]
+mod desktop_entry;
+#[cfg(any(backend_linux, test))]
+mod exec;
+#[cfg(any(backend_linux, test))]
+mod icon_theme;
+#[cfg(any(backend_linux, test))]
+mod raster;
 
 use slint::{Rgba8Pixel, SharedPixelBuffer};
 

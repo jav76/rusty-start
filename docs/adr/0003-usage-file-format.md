@@ -33,6 +33,13 @@ launch	<count>	<last launch, Unix seconds>	<launch ID>
 - Writes go through a background thread (`rusty-start-usage`) that writes a temporary file and
   renames it over `usage.tsv`, so a crash never leaves a truncated file.
 
+## Amendment (2026-10-20): Linux launch IDs
+
+On Linux the launch ID is the desktop file ID from the Desktop Entry specification, for example
+`org.kde.konsole.desktop` or `kde4-konsole.desktop` for `kde4/konsole.desktop`. It contains no tabs
+or newlines, so the format is unchanged and needs no version bump. A file is never shared between
+platforms, so the two kinds of ID never mix.
+
 ## Consequences
 
 - No new dependency, and the format is easy to read and edit by hand.

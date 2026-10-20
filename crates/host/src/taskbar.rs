@@ -4,7 +4,6 @@
 //! monitors, maintains the shared memory state (`HookSharedState`), and manages the lifecycle of the
 //! `WH_GETMESSAGE` hook injected into `explorer.exe`.
 
-#[cfg(windows)]
 pub mod win32 {
     use anyhow::{Context, Result, bail};
     use rusty_start_protocol::{HOOK_DLL_NAME, HOOK_SHARED_MEMORY_NAME, HookSharedState, Rect};
@@ -292,19 +291,4 @@ pub mod win32 {
     }
 }
 
-#[cfg(not(windows))]
-pub mod preview {
-    use anyhow::Result;
-
-    pub struct TaskbarHookGuard;
-
-    pub fn install_taskbar_hook(_trigger_hwnd: usize, _toggle_msg: u32) -> Result<TaskbarHookGuard> {
-        Ok(TaskbarHookGuard)
-    }
-}
-
-#[cfg(windows)]
 pub use win32::*;
-
-#[cfg(not(windows))]
-pub use preview::*;

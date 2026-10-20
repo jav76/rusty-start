@@ -13,9 +13,13 @@ repository = "https://github.com/jav76/rusty-start"
 [workspace.dependencies]
 anyhow = "1.0.104"
 glow = "0.18.0"
+png = { version = "0.18.1", default-features = false }
+resvg = { version = "0.48.1", default-features = false }
+rustix = { version = "1.1.5", default-features = false, features = ["event", "fs", "pipe", "std"] }
 slint = { version = "1.18.1", default-features = false }
 slint-build = "1.18.1"
 windows = "0.62.2"
+zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 rusty-start-protocol = { path = "crates/protocol" }
 
 [workspace.lints.rust]

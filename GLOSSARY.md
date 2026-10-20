@@ -16,4 +16,7 @@
   - _Avoid_: shutdown menu, power menu.
 - **Card Anchor**: The user-configurable alignment preset (`middle-left` by default, `center`, `bottom-left`, `bottom-center`) that determines where the `640x720` Liquid-Glass Card sits within the active monitor's Fog Veil.
   - _Avoid_: window dock, screen gravity.
-
+- **Launch ID**: The platform identifier the host uses to launch an app and to key its pins and launch history: an AppUserModelID or known-folder path on Windows, a desktop file ID (`org.kde.konsole.desktop`) on Linux.
+  - _Avoid_: app path, exe name, app ID.
+- **Plain Glass**: The Fog Veil and Liquid-Glass Card drawn without a desktop snapshot: a dimmed veil and a frosted, unrefracted card over the live desktop. Used when capture is refused, unavailable or takes longer than 100 ms.
+  - _Avoid_: fallback mode, no-blur mode.

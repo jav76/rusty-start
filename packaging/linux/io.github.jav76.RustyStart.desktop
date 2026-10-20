@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Rusty Start
+Comment=Fast app launcher with a Liquid-Glass menu
+Exec=/usr/bin/rusty-start
+NoDisplay=true
+# KWin hands desktop snapshots only to executables whose installed entry lists the interface.
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2

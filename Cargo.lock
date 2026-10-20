@@ -3722,10 +3722,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "glow",
+ "png",
+ "resvg",
+ "rustix 1.1.5",
  "rusty-start-protocol",
  "slint",
  "slint-build",
  "windows",
+ "zbus",
 ]
 
 [[package]]

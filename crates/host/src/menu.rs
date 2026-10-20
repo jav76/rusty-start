@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
-use slint::{ComponentHandle, ModelRc, PhysicalPosition, PhysicalSize, SharedString, Timer, TimerMode, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
 use crate::StartMenu;
 use crate::app_list::{Activation, AppList};
@@ -25,6 +25,9 @@ use crate::usage::{self, Usage};
 const MATERIALIZE_DURATION: Duration = Duration::from_millis(180);
 const DEMATERIALIZE_DURATION: Duration = Duration::from_millis(100);
 const ANIMATION_INTERVAL: Duration = Duration::from_millis(8);
+/// How long an open waits for the desktop snapshot before it condenses as Plain Glass. The window
+/// is already shown and focused while it waits, so typing is never lost.
+const SNAPSHOT_WAIT: Duration = Duration::from_millis(100);
 /// Toggles arriving this soon after a focus-loss dismiss are ignored. Clicking the taskbar Start
 /// button deactivates the menu on mouse-down and posts the toggle on mouse-up, which would
 /// otherwise reopen the menu the click just closed.
@@ -42,10 +45,21 @@ thread_local! {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Phase {
     Hidden,
-    Materializing { started_at: Instant },
+    /// Shown fully transparent with keyboard focus while the desktop snapshot is captured.
+    AwaitingSnapshot {
+        started_at: Instant,
+    },
+    Materializing {
+        started_at: Instant,
+    },
     Open,
-    Dematerializing { started_at: Instant, from_progress: f32 },
-    Clearing { ticks_left: u8 },
+    Dematerializing {
+        started_at: Instant,
+        from_progress: f32,
+    },
+    Clearing {
+        ticks_left: u8,
+    },
 }
 
 struct MenuController {
@@ -58,6 +72,8 @@ struct MenuController {
     dismissed_by_deactivation_at: Option<Instant>,
     /// Rebuilt app index waiting for the next show, so the list never changes under the cursor.
     pending_apps: Option<Vec<App>>,
+    /// Power actions in power flyout order. The flyout reports clicks by index into this list.
+    power_actions: Vec<PowerAction>,
 }
 
 impl MenuController {
@@ -73,6 +89,7 @@ impl MenuController {
             timer: Timer::default(),
             dismissed_by_deactivation_at: None,
             pending_apps: None,
+            power_actions: PowerAction::ALL.to_vec(),
         }
     }
 }
@@ -83,14 +100,12 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
         .ok();
     start_menu.set_rows(ModelRc::from(Rc::new(AppList::new(writer))));
 
-    let power_labels: Vec<SharedString> = PowerAction::ALL.iter().map(|action| action.label().into()).collect();
-    start_menu.set_power_labels(ModelRc::from(Rc::new(VecModel::from(power_labels))));
+    set_power_actions(start_menu, PowerAction::ALL.to_vec());
 
     CONTROLLER.with(|cell| {
         let controller = cell.borrow();
         let rect = controller.monitor_rect;
-        start_menu.window().set_position(PhysicalPosition::new(rect.x, rect.y));
-        start_menu.window().set_size(overlay_size(rect));
+        backdrop::place_overlay_window(start_menu.window(), rect);
         apply_layout(start_menu, rect, controller.config, &controller.glass_state);
         set_progress(start_menu, &controller.glass_state, 0.0);
         glass::install_rendering_notifier(start_menu, Rc::clone(&controller.glass_state));
@@ -106,7 +121,14 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
                 WIN_KEY_TAP.with(|cell| cell.set(MenuWinKeyTap::default()));
                 dismiss_on_deactivation(&start_menu);
             }
-            winit::event::WindowEvent::KeyboardInput { event, .. } => handle_win_key(&start_menu, event),
+            winit::event::WindowEvent::KeyboardInput { event, .. } if trigger::MENU_HANDLES_WIN_KEY => {
+                handle_win_key(&start_menu, event);
+            }
+            winit::event::WindowEvent::Resized(size)
+                if backdrop::OVERLAY_FOLLOWS_WINDOW_SIZE && backdrop::keep_overlay_fullscreen(start_menu.window()) =>
+            {
+                follow_window_size(&start_menu, size.width, size.height);
+            }
             _ => {}
         }
         EventResult::Propagate
@@ -143,7 +165,9 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
     start_menu.on_power(move |index| {
         if let Some(start_menu) = weak_menu.upgrade()
-            && let Some(&action) = usize::try_from(index).ok().and_then(|index| PowerAction::ALL.get(index))
+            && let Some(action) = usize::try_from(index)
+                .ok()
+                .and_then(|index| CONTROLLER.with(|cell| cell.borrow().power_actions.get(index).copied()))
         {
             perform_power_action(&start_menu, action);
         }
@@ -155,6 +179,24 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
             cycle_anchor(&start_menu);
         }
     });
+}
+
+/// Lays the menu out for the size the compositor gave the fullscreen overlay.
+fn follow_window_size(start_menu: &StartMenu, width: u32, height: u32) {
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    CONTROLLER.with(|cell| {
+        let mut controller = cell.borrow_mut();
+        let rect = MonitorRect { x: 0, y: 0, width, height };
+        if controller.monitor_rect == rect {
+            return;
+        }
+        controller.monitor_rect = rect;
+        apply_layout(start_menu, rect, controller.config, &controller.glass_state);
+    });
+    start_menu.window().request_redraw();
 }
 
 /// While the menu has keyboard focus the trigger's keyboard hook never sees its keys, so the window
@@ -197,14 +239,19 @@ pub fn load_apps_in_background(start_menu: &StartMenu) -> anyhow::Result<()> {
     thread::Builder::new()
         .name("rusty-start-app-index".into())
         .spawn(move || {
+            let started_at: Instant = Instant::now();
             let usage: anyhow::Result<Usage> = usage::load();
             let apps: Vec<App> = apps::load()
                 .inspect_err(|error| eprintln!("failed to load the app list: {error:#}"))
                 .unwrap_or_default();
+            let power_actions: Vec<PowerAction> = power::available();
+            eprintln!("loaded the app index ({} apps) in {} ms", apps.len(), started_at.elapsed().as_millis());
             let icon_apps: Vec<App> = apps.clone();
 
-            let delivered =
-                weak_menu.upgrade_in_event_loop(move |start_menu| set_initial_data(&start_menu, apps, usage));
+            let delivered = weak_menu.upgrade_in_event_loop(move |start_menu| {
+                set_initial_data(&start_menu, apps, usage);
+                set_power_actions(&start_menu, power_actions);
+            });
             if let Err(error) = delivered {
                 eprintln!("failed to deliver the app list: {error}");
                 return;
@@ -215,6 +262,14 @@ pub fn load_apps_in_background(start_menu: &StartMenu) -> anyhow::Result<()> {
         .context("failed to spawn the app index thread")?;
 
     Ok(())
+}
+
+/// Shows `actions` in the power flyout and search results.
+fn set_power_actions(start_menu: &StartMenu, actions: Vec<PowerAction>) {
+    let labels: Vec<SharedString> = actions.iter().map(|action| action.label().into()).collect();
+    start_menu.set_power_labels(ModelRc::from(Rc::new(VecModel::from(labels))));
+    AppList::with(start_menu, |app_list| app_list.set_power_actions(actions.clone()));
+    CONTROLLER.with(|cell| cell.borrow_mut().power_actions = actions);
 }
 
 fn set_initial_data(start_menu: &StartMenu, apps: Vec<App>, usage: anyhow::Result<Usage>) {
@@ -242,8 +297,17 @@ fn deliver_icons(weak_menu: &slint::Weak<StartMenu>, apps: &[App]) {
         return;
     }
 
+    let started_at: Instant = Instant::now();
     let icons: Vec<(String, IconPixels)> = match apps::load_icons(&missing) {
-        Ok(icons) => icons,
+        Ok(icons) => {
+            eprintln!(
+                "rendered {} of {} app icons in {} ms",
+                icons.len(),
+                missing.len(),
+                started_at.elapsed().as_millis()
+            );
+            icons
+        }
         Err(error) => {
             eprintln!("failed to load app icons: {error:#}");
             return;
@@ -304,17 +368,15 @@ fn show(start_menu: &StartMenu) {
     CONTROLLER.with(|cell| {
         let mut controller = cell.borrow_mut();
         controller.timer.stop();
+        controller.glass_state.borrow_mut().shown_at = Some(Instant::now());
 
         // Capture a fresh desktop snapshot only while the Start menu window is hidden so we never
         // capture our own Fog Veil.
-        if !start_menu.window().is_visible() {
-            match controller.capturer.capture_active_monitor() {
-                Ok(snapshot) => {
-                    controller.monitor_rect = snapshot.rect;
-                    controller.glass_state.borrow_mut().pending_snapshot = Some(snapshot);
-                }
-                Err(error) => eprintln!("failed to capture the active monitor backdrop: {error:#}"),
-            }
+        let capturing: bool = !start_menu.window().is_visible();
+        let mut snapshot_ready: bool = true;
+        if capturing {
+            controller.capturer.start_capture();
+            snapshot_ready = take_snapshot(&mut controller);
         }
 
         if let Some(apps) = controller.pending_apps.take() {
@@ -323,13 +385,16 @@ fn show(start_menu: &StartMenu) {
 
         let rect: MonitorRect = controller.monitor_rect;
         backdrop::configure_overlay_window();
-        start_menu.window().set_position(PhysicalPosition::new(rect.x, rect.y));
-        start_menu.window().set_size(overlay_size(rect));
+        backdrop::place_overlay_window(start_menu.window(), rect);
         apply_layout(start_menu, rect, controller.config, &controller.glass_state);
 
         set_progress(start_menu, &controller.glass_state, 0.0);
         start_menu.invoke_reset_search();
-        controller.phase = Phase::Materializing { started_at: Instant::now() };
+        controller.phase = if snapshot_ready {
+            Phase::Materializing { started_at: Instant::now() }
+        } else {
+            Phase::AwaitingSnapshot { started_at: Instant::now() }
+        };
     });
 
     if let Err(error) = start_menu.show() {
@@ -345,6 +410,31 @@ fn show(start_menu: &StartMenu) {
     start_menu.invoke_focus_search();
     start_menu.window().request_redraw();
     start_animation_timer(start_menu);
+}
+
+/// Hands a finished capture to the glass renderer, or marks the open as Plain Glass when it failed.
+/// Returns whether a result arrived.
+fn take_snapshot(controller: &mut MenuController) -> bool {
+    let Some(result) = controller.capturer.poll_capture() else {
+        return false;
+    };
+    match result {
+        Ok(snapshot) => {
+            if !backdrop::OVERLAY_FOLLOWS_WINDOW_SIZE {
+                controller.monitor_rect = snapshot.rect;
+            }
+            let mut glass_state = controller.glass_state.borrow_mut();
+            glass_state.pending_snapshot = Some(snapshot);
+            glass_state.plain = false;
+        }
+        Err(error) => {
+            if !error.is::<backdrop::CaptureUnavailable>() {
+                eprintln!("failed to capture the active monitor backdrop: {error:#}");
+            }
+            controller.glass_state.borrow_mut().plain = true;
+        }
+    }
+    true
 }
 
 /// Runs the `100ms` reverse condense animation before hiding the window.
@@ -370,8 +460,9 @@ fn dismiss(start_menu: &StartMenu) {
 /// Dismisses the menu when another window takes the foreground (Alt+Tab, a click elsewhere, a
 /// launched app). Launching already moves the menu to `Clearing`, so `dismiss` ignores it then.
 fn dismiss_on_deactivation(start_menu: &StartMenu) {
-    let is_open: bool =
-        CONTROLLER.with(|cell| matches!(cell.borrow().phase, Phase::Materializing { .. } | Phase::Open));
+    let is_open: bool = CONTROLLER.with(|cell| {
+        matches!(cell.borrow().phase, Phase::AwaitingSnapshot { .. } | Phase::Materializing { .. } | Phase::Open)
+    });
     if !is_open {
         return;
     }
@@ -469,14 +560,6 @@ fn apply_layout(start_menu: &StartMenu, rect: MonitorRect, config: Config, glass
     glass_state.borrow_mut().update_geometry(rect, scale, config);
 }
 
-/// The overlay is one physical pixel narrower than the monitor. A borderless window that covers
-/// the whole monitor and holds the foreground is treated as fullscreen, and switching into that
-/// mode flashes the display black. The glass renderer keeps its full-monitor viewport, so only the
-/// rightmost column goes undrawn and every other pixel stays aligned with the desktop snapshot.
-fn overlay_size(rect: MonitorRect) -> PhysicalSize {
-    PhysicalSize::new(rect.width.saturating_sub(1).max(1), rect.height)
-}
-
 fn set_progress(start_menu: &StartMenu, glass_state: &Rc<RefCell<GlassState>>, progress: f32) {
     let clamped: f32 = progress.clamp(0.0, 1.0);
     start_menu.set_progress(clamped);
@@ -507,6 +590,18 @@ fn tick_animation(start_menu: &StartMenu) {
     CONTROLLER.with(|cell| {
         let mut controller = cell.borrow_mut();
         match controller.phase {
+            Phase::AwaitingSnapshot { started_at } => {
+                if take_snapshot(&mut controller) {
+                    controller.phase = Phase::Materializing { started_at: Instant::now() };
+                } else if started_at.elapsed() >= SNAPSHOT_WAIT {
+                    eprintln!(
+                        "the desktop snapshot took over {} ms; opening as Plain Glass",
+                        SNAPSHOT_WAIT.as_millis()
+                    );
+                    controller.glass_state.borrow_mut().plain = true;
+                    controller.phase = Phase::Materializing { started_at: Instant::now() };
+                }
+            }
             Phase::Materializing { started_at } => {
                 let raw_t: f32 =
                     (started_at.elapsed().as_secs_f32() / MATERIALIZE_DURATION.as_secs_f32()).clamp(0.0, 1.0);

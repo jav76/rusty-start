@@ -5,11 +5,15 @@ mod app_list;
 mod apps;
 mod backdrop;
 mod config;
+#[cfg(backend_linux)]
+mod dbus;
 mod glass;
 mod instance;
 mod menu;
 mod power;
 mod search;
+mod setup;
+#[cfg(backend_win32)]
 mod taskbar;
 mod trigger;
 mod usage;
@@ -19,6 +23,11 @@ use slint::ComponentHandle;
 slint::include_modules!();
 
 fn main() -> anyhow::Result<()> {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(("setup", setup_arguments)) = arguments.split_first().map(|(first, rest)| (first.as_str(), rest)) {
+        return setup::run(setup_arguments);
+    }
+
     let Some(_instance): Option<instance::InstanceGuard> = instance::acquire()? else {
         eprintln!("Rusty Start is already running; toggled its menu instead");
         return Ok(());
