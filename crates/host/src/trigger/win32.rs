@@ -33,6 +33,10 @@ use windows::core::{HSTRING, PCWSTR};
 use crate::config::Config;
 use crate::taskbar::TaskbarHookGuard;
 
+/// The low-level hook does not see keys while the menu has keyboard focus, so the menu window
+/// detects the closing Windows-key tap itself.
+pub const MENU_HANDLES_WIN_KEY: bool = true;
+
 /// Identifies the fallback development hotkey, Ctrl+Alt+Space.
 const DEV_HOTKEY_ID: i32 = 1;
 

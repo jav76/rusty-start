@@ -11,6 +11,7 @@ use std::slice;
 
 use anyhow::{Context, Result, bail};
 use slint::winit_030::winit::platform::windows::{CornerPreference, WindowAttributesExtWindows};
+use slint::{PhysicalPosition, PhysicalSize};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_TRANSITIONS_FORCEDISABLED, DwmSetWindowAttribute,
@@ -146,6 +147,16 @@ pub fn install_backend() -> Result<OverlayOwner> {
         .context("failed to select the winit backend")?;
 
     Ok(owner)
+}
+
+/// Covers the monitor with the overlay, one physical pixel narrower than the monitor. A borderless
+/// window that covers the whole monitor and holds the foreground is treated as fullscreen, and
+/// switching into that mode flashes the display black. The glass renderer keeps its full-monitor
+/// viewport, so only the rightmost column goes undrawn and every other pixel stays aligned with the
+/// desktop snapshot.
+pub fn place_overlay_window(window: &slint::Window, rect: MonitorRect) {
+    window.set_position(PhysicalPosition::new(rect.x, rect.y));
+    window.set_size(PhysicalSize::new(rect.width.saturating_sub(1).max(1), rect.height));
 }
 
 /// Turns off DWM open/close transitions and the Windows 11 accent border on the overlay. These

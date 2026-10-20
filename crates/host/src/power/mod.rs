@@ -3,14 +3,14 @@
 //! On Windows they call the session and power APIs. On other platforms they only log, so preview
 //! builds never end the developer's session.
 
-#[cfg(windows)]
+#[cfg(backend_win32)]
 mod win32;
-#[cfg(windows)]
+#[cfg(backend_win32)]
 pub use win32::perform;
 
-#[cfg(not(windows))]
+#[cfg(not(backend_win32))]
 mod preview;
-#[cfg(not(windows))]
+#[cfg(not(backend_win32))]
 pub use preview::perform;
 
 use crate::search::Searchable;

@@ -1,18 +1,18 @@
 //! Decides when the menu opens.
 //!
-//! On Windows a message-only window listens for a development hotkey and for the toggle message
-//! the explorer hook will post. On other platforms there is no global trigger, so the menu opens
-//! once at startup to allow UI iteration.
+//! On Windows a hidden window listens for the Windows key, a development hotkey and the toggle
+//! message other processes post. On other platforms there is no global trigger yet, so the menu
+//! opens once at startup to allow UI iteration.
 
-#[cfg(windows)]
+#[cfg(backend_win32)]
 mod win32;
-#[cfg(windows)]
-pub use win32::{TriggerGuard, install, suppress_native_start_menu};
+#[cfg(backend_win32)]
+pub use win32::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, suppress_native_start_menu};
 
-#[cfg(not(windows))]
+#[cfg(not(backend_win32))]
 mod preview;
-#[cfg(not(windows))]
-pub use preview::{TriggerGuard, install, suppress_native_start_menu};
+#[cfg(not(backend_win32))]
+pub use preview::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, suppress_native_start_menu};
 
 /// A key event seen by the menu window while it has keyboard focus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

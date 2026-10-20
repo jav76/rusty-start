@@ -195,14 +195,20 @@ impl Config {
     }
 }
 
-/// Directory holding `config.toml` and `usage.tsv`: `%APPDATA%\RustyStart` on Windows,
-/// `$XDG_CONFIG_HOME/rusty-start` (or `~/.config/rusty-start`) elsewhere.
+/// Directory holding `config.toml` and `usage.tsv`: `%APPDATA%\RustyStart`.
+#[cfg(windows)]
 pub fn data_dir() -> Option<PathBuf> {
-    if let Some(appdata) = env::var_os("APPDATA") {
-        return Some(PathBuf::from(appdata).join("RustyStart"));
-    }
-    if let Some(xdg) = env::var_os("XDG_CONFIG_HOME") {
-        return Some(PathBuf::from(xdg).join("rusty-start"));
+    env::var_os("APPDATA").map(|appdata| PathBuf::from(appdata).join("RustyStart"))
+}
+
+/// Directory holding `config.toml` and `usage.tsv`: `$XDG_CONFIG_HOME/rusty-start`, or
+/// `~/.config/rusty-start` when it is unset or not absolute.
+#[cfg(not(windows))]
+pub fn data_dir() -> Option<PathBuf> {
+    if let Some(xdg) = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from)
+        && xdg.is_absolute()
+    {
+        return Some(xdg.join("rusty-start"));
     }
     env::var_os("HOME").map(|home| PathBuf::from(home).join(".config").join("rusty-start"))
 }
@@ -216,6 +222,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(clippy::float_cmp, reason = "the expected values are exact in binary floating point")]
     fn default_anchor_is_middle_left() {
         let config = Config::default();
 

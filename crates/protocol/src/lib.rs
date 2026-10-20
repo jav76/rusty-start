@@ -1,7 +1,26 @@
-//! Identifiers shared by the host process and the explorer hook.
+//! Identifiers shared by the host process, the explorer hook and other processes that toggle the
+//! menu.
 //!
-//! The hook signals the host by posting a registered window message to the host's hidden
-//! trigger window. Both sides resolve the names below at runtime.
+//! On Windows the hook signals the host by posting a registered window message to the host's
+//! hidden trigger window. On Linux the host serves a D-Bus interface on the session bus. Both sides
+//! resolve the names below at runtime.
+
+/// Application ID on Linux: the host's well-known session bus name, its Wayland app ID and the
+/// base name of its `.desktop` file. KWin window rules and restricted-interface authorization key
+/// off it.
+pub const APP_ID: &str = "io.github.jav76.RustyStart";
+
+/// Object path of the host's D-Bus interface.
+pub const DBUS_OBJECT_PATH: &str = "/io/github/jav76/RustyStart";
+
+/// D-Bus interface the host serves at `DBUS_OBJECT_PATH`.
+///
+/// - `Toggle()` toggles the menu. Compositor bindings call it, for example KWin's
+///   `[ModifierOnlyShortcuts] Meta` entry, which can only call methods without arguments.
+/// - `ToggleWithToken(s token)` toggles the menu and uses `token` as the xdg-activation token, so
+///   the menu can take keyboard focus. A second `rusty-start` launch passes its
+///   `XDG_ACTIVATION_TOKEN`, or an empty string when it has none.
+pub const DBUS_INTERFACE: &str = "io.github.jav76.RustyStart";
 
 /// Window class of the host's hidden trigger window.
 ///

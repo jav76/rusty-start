@@ -2,21 +2,23 @@
 //!
 //! On Windows, captures the monitor containing the mouse cursor (`rcMonitor`, including the taskbar)
 //! via a reusable GDI DIB section so the GPU shader can fog the screen and refract desktop pixels
-//! through the Liquid-Glass Card. On non-Windows platforms, generates a synthetic desktop scene so
-//! the shader pipeline can be exercised in preview builds.
+//! through the Liquid-Glass Card. On other backends, generates a synthetic desktop scene so the
+//! shader pipeline can be exercised in preview builds.
 
-#[cfg(windows)]
+#[cfg(backend_win32)]
 mod win32;
-#[cfg(windows)]
+#[cfg(backend_win32)]
 pub use win32::{
     Capturer, OverlayOwner, active_monitor_rect, configure_overlay_window, focus_overlay_window, install_backend,
+    place_overlay_window,
 };
 
-#[cfg(not(windows))]
+#[cfg(not(backend_win32))]
 mod preview;
-#[cfg(not(windows))]
+#[cfg(not(backend_win32))]
 pub use preview::{
     Capturer, OverlayOwner, active_monitor_rect, configure_overlay_window, focus_overlay_window, install_backend,
+    place_overlay_window,
 };
 
 /// Virtual-screen rectangle of a monitor in physical pixels.

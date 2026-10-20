@@ -73,18 +73,24 @@ so the menu can take keyboard focus (see `crates/protocol`).
 
 ## Checks
 
-CI runs on `windows-latest` for every push to `main` and every pull request. Run the same checks
-locally before opening a PR:
+CI runs on `windows-latest` and in a `debian:bookworm` container for every push to `main` and every
+pull request. Run the same checks locally before opening a PR:
 
 ```
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy -p rusty-start-host --all-targets --locked --features preview -- -D warnings
 cargo test --workspace --locked
 ```
 
-On Linux the host builds in preview mode: the menu opens once at startup over a synthetic desktop
-backdrop with a fixed sample app list, so the Liquid-Glass shaders and UI can be iterated on without
-a Windows machine. Windows integration can only be tested on Windows.
+Linux builds need `pkg-config` and `libfontconfig-dev` (`sudo apt install pkg-config
+libfontconfig-dev` on Debian).
+
+`--features preview` builds the preview backend on any OS: the menu opens once at startup over a
+synthetic desktop backdrop with a fixed sample app list, so the Liquid-Glass shaders and UI can be
+iterated on without desktop integration. Linux support (KDE Plasma 6 on Wayland first) is in
+progress; until it lands, Linux builds also use the preview behavior. Windows integration can only
+be tested on Windows.
 
 ## Project layout
 

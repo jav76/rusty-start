@@ -10,6 +10,7 @@ mod instance;
 mod menu;
 mod power;
 mod search;
+#[cfg(backend_win32)]
 mod taskbar;
 mod trigger;
 mod usage;

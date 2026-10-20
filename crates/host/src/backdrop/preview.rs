@@ -3,7 +3,10 @@
 //! Generates a colorful multi-window desktop wallpaper with crisp edges and grid lines so the
 //! dual-Kawase fog ramp and SDF bevel refraction are clearly visible without a Win32 desktop.
 
+#![expect(clippy::unnecessary_wraps, reason = "signatures match the fallible win32 backend")]
+
 use anyhow::Result;
+use slint::{PhysicalPosition, PhysicalSize};
 
 use super::{MonitorRect, MonitorSnapshot};
 
@@ -21,6 +24,11 @@ pub fn install_backend() -> Result<OverlayOwner> {
     Ok(OverlayOwner)
 }
 
+pub fn place_overlay_window(window: &slint::Window, rect: MonitorRect) {
+    window.set_position(PhysicalPosition::new(rect.x, rect.y));
+    window.set_size(PhysicalSize::new(rect.width, rect.height));
+}
+
 pub fn configure_overlay_window() {}
 
 pub fn focus_overlay_window() -> bool {
@@ -33,6 +41,7 @@ pub struct Capturer {
 }
 
 impl Capturer {
+    #[expect(clippy::many_single_char_names, reason = "pixel math in shader-style notation")]
     pub fn capture_active_monitor(&mut self) -> Result<MonitorSnapshot> {
         if let Some(snapshot) = &self.cached {
             return Ok(snapshot.clone());

@@ -12,6 +12,10 @@ repository.workspace = true
 name = "rusty-start"
 path = "src/main.rs"
 
+[features]
+# Forces the preview backend (sample apps, synthetic backdrop, logged power actions) on any OS.
+preview = []
+
 [dependencies]
 anyhow.workspace = true
 glow.workspace = true

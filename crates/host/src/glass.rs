@@ -800,6 +800,7 @@ void main() {
 "#;
 
 #[cfg(test)]
+#[expect(clippy::float_cmp, reason = "the expected values are exact in binary floating point")]
 mod tests {
     use super::*;
 

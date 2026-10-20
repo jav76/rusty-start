@@ -3,14 +3,14 @@
 //! On Windows the list comes from the shell's Applications folder, which is what the built-in
 //! Start menu shows. On other platforms a fixed sample list stands in so the UI can be iterated on.
 
-#[cfg(windows)]
+#[cfg(backend_win32)]
 mod win32;
-#[cfg(windows)]
+#[cfg(backend_win32)]
 pub use win32::{AppWatcher, launch, load, load_icons, watch};
 
-#[cfg(not(windows))]
+#[cfg(not(backend_win32))]
 mod preview;
-#[cfg(not(windows))]
+#[cfg(not(backend_win32))]
 pub use preview::{AppWatcher, launch, load, load_icons, watch};
 
 use slint::{Rgba8Pixel, SharedPixelBuffer};

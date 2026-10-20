@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
-use slint::{ComponentHandle, ModelRc, PhysicalPosition, PhysicalSize, SharedString, Timer, TimerMode, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
 use crate::StartMenu;
 use crate::app_list::{Activation, AppList};
@@ -89,8 +89,7 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
     CONTROLLER.with(|cell| {
         let controller = cell.borrow();
         let rect = controller.monitor_rect;
-        start_menu.window().set_position(PhysicalPosition::new(rect.x, rect.y));
-        start_menu.window().set_size(overlay_size(rect));
+        backdrop::place_overlay_window(start_menu.window(), rect);
         apply_layout(start_menu, rect, controller.config, &controller.glass_state);
         set_progress(start_menu, &controller.glass_state, 0.0);
         glass::install_rendering_notifier(start_menu, Rc::clone(&controller.glass_state));
@@ -106,7 +105,9 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
                 WIN_KEY_TAP.with(|cell| cell.set(MenuWinKeyTap::default()));
                 dismiss_on_deactivation(&start_menu);
             }
-            winit::event::WindowEvent::KeyboardInput { event, .. } => handle_win_key(&start_menu, event),
+            winit::event::WindowEvent::KeyboardInput { event, .. } if trigger::MENU_HANDLES_WIN_KEY => {
+                handle_win_key(&start_menu, event);
+            }
             _ => {}
         }
         EventResult::Propagate
@@ -323,8 +324,7 @@ fn show(start_menu: &StartMenu) {
 
         let rect: MonitorRect = controller.monitor_rect;
         backdrop::configure_overlay_window();
-        start_menu.window().set_position(PhysicalPosition::new(rect.x, rect.y));
-        start_menu.window().set_size(overlay_size(rect));
+        backdrop::place_overlay_window(start_menu.window(), rect);
         apply_layout(start_menu, rect, controller.config, &controller.glass_state);
 
         set_progress(start_menu, &controller.glass_state, 0.0);
@@ -467,14 +467,6 @@ fn apply_layout(start_menu: &StartMenu, rect: MonitorRect, config: Config, glass
     start_menu.set_anchor_label(config.card_anchor.label().into());
 
     glass_state.borrow_mut().update_geometry(rect, scale, config);
-}
-
-/// The overlay is one physical pixel narrower than the monitor. A borderless window that covers
-/// the whole monitor and holds the foreground is treated as fullscreen, and switching into that
-/// mode flashes the display black. The glass renderer keeps its full-monitor viewport, so only the
-/// rightmost column goes undrawn and every other pixel stays aligned with the desktop snapshot.
-fn overlay_size(rect: MonitorRect) -> PhysicalSize {
-    PhysicalSize::new(rect.width.saturating_sub(1).max(1), rect.height)
 }
 
 fn set_progress(start_menu: &StartMenu, glass_state: &Rc<RefCell<GlassState>>, progress: f32) {
