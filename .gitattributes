@@ -1,0 +1,15 @@
+* text=auto eol=lf
+
+*.rs text eol=lf diff=rust
+*.slint text eol=lf
+*.toml text eol=lf
+*.md text eol=lf diff=markdown
+*.yml text eol=lf
+
+Cargo.lock text eol=lf linguist-generated=true -diff
+
+*.png binary
+*.ico binary
+*.zip binary
+*.dll binary
+*.exe binary

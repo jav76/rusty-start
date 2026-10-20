@@ -1,2 +1,7 @@
+# Stable rustfmt options only, so `cargo fmt` works on the pinned stable toolchain.
+style_edition = "2024"
 max_width = 120
 use_small_heuristics = "Max"
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true

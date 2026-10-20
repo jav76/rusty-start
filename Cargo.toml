@@ -19,10 +19,49 @@ windows = "0.62.2"
 rusty-start-protocol = { path = "crates/protocol" }
 
 [workspace.lints.rust]
-unsafe_op_in_unsafe_fn = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+missing_unsafe_on_extern = "deny"
+unused_must_use = "deny"
 
 [workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+# Unsafe and FFI hygiene.
 undocumented_unsafe_blocks = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+missing_safety_doc = "warn"
+mem_forget = "warn"
+
+# Leftovers that must not ship. `todo` and `unwrap_used` are not enabled because Slint's generated
+# code (included through `include_modules!`) uses both; AGENTS.md states those rules instead.
+dbg_macro = "warn"
+print_stdout = "warn"
+unimplemented = "warn"
+exit = "warn"
+rc_buffer = "warn"
+str_to_string = "warn"
+empty_structs_with_brackets = "warn"
+semicolon_if_nothing_returned = "warn"
+
+# Pedantic lints that fight Win32, OpenGL and pixel math, where numeric casts at API boundaries are
+# routine. Use `try_from` wherever a value can actually overflow.
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+
+# Pedantic lints with more noise than value for an application.
+doc_markdown = "allow"
+if_not_else = "allow"
+items_after_statements = "allow"
+match_same_arms = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+needless_raw_string_hashes = "allow"
+similar_names = "allow"
 
 # Do not set `panic = "abort"` here. Profiles apply to every crate in the workspace, and the
 # future explorer hook DLL relies on unwinding so `catch_unwind` can keep panics out of explorer.
