@@ -1,0 +1,141 @@
+import { PinGlyph } from "pin_glyph.slint";
+import { PowerGlyph } from "power_glyph.slint";
+
+export enum RowKind {
+    app,
+    header,
+    system,
+}
+
+export struct MenuRow {
+    kind: RowKind,
+    text: string,
+    icon: image,
+    pinned: bool,
+    confirming: bool,
+}
+
+/// One list row: a section header, an app with its icon and pin toggle, or a power action.
+export component MenuRowView inherits Rectangle {
+    in property <MenuRow> entry;
+    in property <bool> selected;
+
+    callback activate();
+    callback toggle-pin();
+
+    property <bool> is-header: root.entry.kind == RowKind.header;
+    property <bool> is-app: root.entry.kind == RowKind.app;
+    property <bool> highlighted: root.selected || row-touch.has-hover || pin-touch.has-hover;
+
+    background: transparent;
+    accessible-role: list-item;
+    accessible-label: root.entry.text;
+    accessible-item-selected: root.selected;
+    accessible-action-default => {
+        root.activate();
+    }
+
+    if root.is-header: Text {
+        x: 16px;
+        y: parent.height - self.height - 6px;
+        width: parent.width - 32px;
+        text: root.entry.text;
+        color: #9fb7d8;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+    }
+
+    row-touch := TouchArea {
+        enabled: !root.is-header;
+        clicked => {
+            root.activate();
+        }
+    }
+
+    Rectangle {
+        visible: !root.is-header;
+        x: 2px;
+        y: 2px;
+        width: parent.width - 4px;
+        height: parent.height - 4px;
+        border-radius: 12px;
+        background: root.selected ? #7cc8ff36 : (root.highlighted ? #ffffff1c : transparent);
+        border-width: root.highlighted ? 1px : 0px;
+        border-color: root.selected ? #aee6ff88 : #ffffff2e;
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 8px;
+            spacing: 12px;
+
+            Rectangle {
+                width: 3px;
+                height: 18px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 1.5px;
+                background: root.selected ? #7dd3fc : transparent;
+            }
+
+            Rectangle {
+                width: 24px;
+                height: 24px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 6px;
+                // Placeholder tile until the icon arrives, or for apps the shell has no icon for.
+                background: root.is-app && root.entry.icon.width == 0 ? #ffffff1a : transparent;
+
+                if root.is-app && root.entry.icon.width > 0: Image {
+                    width: 100%;
+                    height: 100%;
+                    source: root.entry.icon;
+                }
+
+                if !root.is-app: PowerGlyph {
+                    width: 20px;
+                    height: 20px;
+                    tint: root.entry.confirming ? #ffd27a : #b8d4ff;
+                }
+            }
+
+            Text {
+                horizontal-stretch: 1;
+                text: root.entry.text;
+                color: root.entry.confirming ? #ffd27a : (root.selected ? #ffffff : #e6f0ff);
+                font-size: 15px;
+                font-weight: root.selected ? 600 : 400;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 8px;
+                visible: root.is-app;
+                background: pin-touch.has-hover ? #ffffff22 : transparent;
+                opacity: root.entry.pinned || pin-touch.has-hover ? 1.0 : (root.highlighted ? 0.6 : 0.0);
+                accessible-role: button;
+                accessible-label: root.entry.pinned ? "Unpin " + root.entry.text : "Pin " + root.entry.text;
+                accessible-action-default => {
+                    root.toggle-pin();
+                }
+
+                PinGlyph {
+                    width: 18px;
+                    height: 18px;
+                    filled: root.entry.pinned;
+                    tint: root.entry.pinned ? #9be2ff : #e6f0ff;
+                }
+
+                pin-touch := TouchArea {
+                    enabled: root.is-app;
+                    clicked => {
+                        root.toggle-pin();
+                    }
+                }
+            }
+        }
+    }
+}

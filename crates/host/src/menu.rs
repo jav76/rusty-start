@@ -1,26 +1,41 @@
 //! Showing, hiding and resetting the menu, plus driving the `180ms` Optical Condense and `100ms`
 //! dismiss animations. Every function here must run on the UI thread.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
+use std::sync::{LazyLock, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use slint::{ComponentHandle, ModelRc, PhysicalPosition, PhysicalSize, Timer, TimerMode};
+use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
+use slint::{ComponentHandle, ModelRc, PhysicalPosition, PhysicalSize, SharedString, Timer, TimerMode, VecModel};
 
 use crate::StartMenu;
-use crate::app_list::AppList;
-use crate::apps::{self, App};
+use crate::app_list::{Activation, AppList};
+use crate::apps::{self, App, IconPixels};
 use crate::backdrop::{self, MonitorRect};
 use crate::config::Config;
 use crate::glass::{self, GlassState};
+use crate::power::{self, PowerAction};
+use crate::trigger::{self, MenuKey, MenuKeyAction, MenuWinKeyTap};
+use crate::usage::{self, Usage};
 
 const MATERIALIZE_DURATION: Duration = Duration::from_millis(180);
 const DEMATERIALIZE_DURATION: Duration = Duration::from_millis(100);
 const ANIMATION_INTERVAL: Duration = Duration::from_millis(8);
+/// Toggles arriving this soon after a focus-loss dismiss are ignored. Clicking the taskbar Start
+/// button deactivates the menu on mouse-down and posts the toggle on mouse-up, which would
+/// otherwise reopen the menu the click just closed.
+const REOPEN_GUARD: Duration = Duration::from_millis(400);
+
+/// Launch IDs whose icons were already handed to the menu. Only the background loader and watcher
+/// threads touch it, so an app list rebuild renders icons for new apps only.
+static RENDERED_ICONS: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Mutex::default);
 
 thread_local! {
+    static WIN_KEY_TAP: Cell<MenuWinKeyTap> = Cell::new(MenuWinKeyTap::default());
     static CONTROLLER: RefCell<MenuController> = RefCell::new(MenuController::new());
 }
 
@@ -40,6 +55,9 @@ struct MenuController {
     monitor_rect: MonitorRect,
     phase: Phase,
     timer: Timer,
+    dismissed_by_deactivation_at: Option<Instant>,
+    /// Rebuilt app index waiting for the next show, so the list never changes under the cursor.
+    pending_apps: Option<Vec<App>>,
 }
 
 impl MenuController {
@@ -53,21 +71,45 @@ impl MenuController {
             monitor_rect,
             phase: Phase::Hidden,
             timer: Timer::default(),
+            dismissed_by_deactivation_at: None,
+            pending_apps: None,
         }
     }
 }
 
 pub fn connect_callbacks(start_menu: &StartMenu) {
-    start_menu.set_apps(ModelRc::from(Rc::new(AppList::default())));
+    let writer: Option<usage::Writer> = usage::Writer::spawn()
+        .inspect_err(|error| eprintln!("pins and launch history will not be saved: {error:#}"))
+        .ok();
+    start_menu.set_rows(ModelRc::from(Rc::new(AppList::new(writer))));
+
+    let power_labels: Vec<SharedString> = PowerAction::ALL.iter().map(|action| action.label().into()).collect();
+    start_menu.set_power_labels(ModelRc::from(Rc::new(VecModel::from(power_labels))));
 
     CONTROLLER.with(|cell| {
         let controller = cell.borrow();
         let rect = controller.monitor_rect;
         start_menu.window().set_position(PhysicalPosition::new(rect.x, rect.y));
-        start_menu.window().set_size(PhysicalSize::new(rect.width, rect.height));
+        start_menu.window().set_size(overlay_size(rect));
         apply_layout(start_menu, rect, controller.config, &controller.glass_state);
         set_progress(start_menu, &controller.glass_state, 0.0);
         glass::install_rendering_notifier(start_menu, Rc::clone(&controller.glass_state));
+    });
+
+    let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
+    start_menu.window().on_winit_window_event(move |_, event| {
+        let Some(start_menu) = weak_menu.upgrade() else {
+            return EventResult::Propagate;
+        };
+        match event {
+            winit::event::WindowEvent::Focused(false) => {
+                WIN_KEY_TAP.with(|cell| cell.set(MenuWinKeyTap::default()));
+                dismiss_on_deactivation(&start_menu);
+            }
+            winit::event::WindowEvent::KeyboardInput { event, .. } => handle_win_key(&start_menu, event),
+            _ => {}
+        }
+        EventResult::Propagate
     });
 
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
@@ -92,6 +134,22 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
     });
 
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
+    start_menu.on_toggle_pin(move |row| {
+        if let Some(start_menu) = weak_menu.upgrade() {
+            toggle_pin(&start_menu, row);
+        }
+    });
+
+    let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
+    start_menu.on_power(move |index| {
+        if let Some(start_menu) = weak_menu.upgrade()
+            && let Some(&action) = usize::try_from(index).ok().and_then(|index| PowerAction::ALL.get(index))
+        {
+            perform_power_action(&start_menu, action);
+        }
+    });
+
+    let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
     start_menu.on_cycle_anchor(move || {
         if let Some(start_menu) = weak_menu.upgrade() {
             cycle_anchor(&start_menu);
@@ -99,40 +157,145 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
     });
 }
 
-/// Builds the app index on a background thread and hands it to the menu when ready.
+/// While the menu has keyboard focus the trigger's keyboard hook never sees its keys, so the window
+/// handles the Windows key itself (see `MenuWinKeyTap`).
+fn handle_win_key(start_menu: &StartMenu, event: &winit::event::KeyEvent) {
+    let Some(key) = menu_key(event) else {
+        return;
+    };
+
+    match WIN_KEY_TAP.with(|cell| {
+        let mut tap: MenuWinKeyTap = cell.get();
+        let action: MenuKeyAction = tap.on_key(key);
+        cell.set(tap);
+        action
+    }) {
+        MenuKeyAction::Mask => trigger::suppress_native_start_menu(),
+        MenuKeyAction::Toggle => dismiss(start_menu),
+        MenuKeyAction::None => {}
+    }
+}
+
+fn menu_key(event: &winit::event::KeyEvent) -> Option<MenuKey> {
+    use winit::keyboard::{Key, NamedKey, PhysicalKey};
+
+    let is_win_key: bool = event.logical_key == Key::Named(NamedKey::Super);
+    match (is_win_key, event.state.is_pressed()) {
+        (true, true) => Some(MenuKey::WinPressed),
+        (true, false) => Some(MenuKey::WinReleased),
+        // The mask key has no scan code, so it arrives unidentified and must not count as a chord.
+        (false, true) if !matches!(event.physical_key, PhysicalKey::Unidentified(_)) => Some(MenuKey::OtherPressed),
+        (false, _) => None,
+    }
+}
+
+/// Loads the usage history and app index on a background thread and hands them to the menu, then
+/// renders the app icons and hands those over too.
 pub fn load_apps_in_background(start_menu: &StartMenu) -> anyhow::Result<()> {
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
 
     thread::Builder::new()
         .name("rusty-start-app-index".into())
-        .spawn(move || match apps::load() {
-            Ok(apps) => {
-                if let Err(error) = weak_menu.upgrade_in_event_loop(move |start_menu| set_apps(&start_menu, apps)) {
-                    eprintln!("failed to deliver the app list: {error}");
-                }
+        .spawn(move || {
+            let usage: anyhow::Result<Usage> = usage::load();
+            let apps: Vec<App> = apps::load()
+                .inspect_err(|error| eprintln!("failed to load the app list: {error:#}"))
+                .unwrap_or_default();
+            let icon_apps: Vec<App> = apps.clone();
+
+            let delivered =
+                weak_menu.upgrade_in_event_loop(move |start_menu| set_initial_data(&start_menu, apps, usage));
+            if let Err(error) = delivered {
+                eprintln!("failed to deliver the app list: {error}");
+                return;
             }
-            Err(error) => eprintln!("failed to load the app list: {error:#}"),
+
+            deliver_icons(&weak_menu, &icon_apps);
         })
         .context("failed to spawn the app index thread")?;
 
     Ok(())
 }
 
-fn set_apps(start_menu: &StartMenu, apps: Vec<App>) {
-    let query = start_menu.get_query();
-    AppList::with(start_menu, |app_list| app_list.replace_apps(apps, &query));
+fn set_initial_data(start_menu: &StartMenu, apps: Vec<App>, usage: anyhow::Result<Usage>) {
+    AppList::with(start_menu, |app_list| {
+        match usage {
+            Ok(usage) => app_list.set_usage(usage),
+            Err(error) => {
+                eprintln!("pins and launch history will not be saved this session: {error:#}");
+                app_list.disable_saving();
+            }
+        }
+        app_list.set_apps(apps);
+    });
+}
+
+/// Renders icons not rendered before for `apps` on the calling thread and hands them to the menu.
+/// Icons are keyed by launch ID, so they can be applied right away even while a rebuilt list waits
+/// for the next show.
+fn deliver_icons(weak_menu: &slint::Weak<StartMenu>, apps: &[App]) {
+    let missing: Vec<App> = {
+        let rendered = RENDERED_ICONS.lock().unwrap_or_else(PoisonError::into_inner);
+        apps.iter().filter(|app| !rendered.contains(&app.launch_id)).cloned().collect()
+    };
+    if missing.is_empty() {
+        return;
+    }
+
+    let icons: Vec<(String, IconPixels)> = match apps::load_icons(&missing) {
+        Ok(icons) => icons,
+        Err(error) => {
+            eprintln!("failed to load app icons: {error:#}");
+            return;
+        }
+    };
+    RENDERED_ICONS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .extend(icons.iter().map(|(launch_id, _)| launch_id.clone()));
+
+    let delivered = weak_menu.upgrade_in_event_loop(move |start_menu| {
+        AppList::with(&start_menu, |app_list| app_list.set_icons(icons));
+    });
+    if let Err(error) = delivered {
+        eprintln!("failed to deliver the app icons: {error}");
+    }
+}
+
+/// Rebuilds the app index off the UI thread after installs and uninstalls. The new list is applied
+/// on the next show.
+pub fn watch_apps(start_menu: &StartMenu) -> anyhow::Result<apps::AppWatcher> {
+    let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
+
+    apps::watch(move |apps| {
+        eprintln!("rebuilt the app index ({} apps); it applies on the next show", apps.len());
+        let icon_apps: Vec<App> = apps.clone();
+        if let Err(error) = weak_menu.upgrade_in_event_loop(move |_| queue_apps(apps)) {
+            eprintln!("failed to deliver the rebuilt app list: {error}");
+            return;
+        }
+        deliver_icons(&weak_menu, &icon_apps);
+    })
+}
+
+/// Stores a rebuilt app index until the next show.
+fn queue_apps(apps: Vec<App>) {
+    CONTROLLER.with(|cell| cell.borrow_mut().pending_apps = Some(apps));
 }
 
 pub fn toggle(start_menu: &StartMenu) {
-    let should_dismiss: bool = CONTROLLER.with(|cell| {
+    let (should_dismiss, recently_deactivated): (bool, bool) = CONTROLLER.with(|cell| {
         let controller = cell.borrow();
-        start_menu.window().is_visible()
-            && !matches!(controller.phase, Phase::Dematerializing { .. } | Phase::Clearing { .. } | Phase::Hidden)
+        let should_dismiss = start_menu.window().is_visible()
+            && !matches!(controller.phase, Phase::Dematerializing { .. } | Phase::Clearing { .. } | Phase::Hidden);
+        let recently_deactivated =
+            controller.dismissed_by_deactivation_at.is_some_and(|at| at.elapsed() < REOPEN_GUARD);
+        (should_dismiss, recently_deactivated)
     });
 
     if should_dismiss {
         dismiss(start_menu);
-    } else {
+    } else if !recently_deactivated {
         show(start_menu);
     }
 }
@@ -154,10 +317,14 @@ fn show(start_menu: &StartMenu) {
             }
         }
 
+        if let Some(apps) = controller.pending_apps.take() {
+            AppList::with(start_menu, |app_list| app_list.set_apps(apps));
+        }
+
         let rect: MonitorRect = controller.monitor_rect;
         backdrop::configure_overlay_window();
         start_menu.window().set_position(PhysicalPosition::new(rect.x, rect.y));
-        start_menu.window().set_size(PhysicalSize::new(rect.width, rect.height));
+        start_menu.window().set_size(overlay_size(rect));
         apply_layout(start_menu, rect, controller.config, &controller.glass_state);
 
         set_progress(start_menu, &controller.glass_state, 0.0);
@@ -168,6 +335,10 @@ fn show(start_menu: &StartMenu) {
     if let Err(error) = start_menu.show() {
         eprintln!("failed to show the menu: {error}");
         return;
+    }
+
+    if !backdrop::focus_overlay_window() {
+        eprintln!("the menu could not take the foreground, so it has no keyboard focus");
     }
 
     // Ensure keyboard focus is active at t = 0ms even before the 180ms condense finishes.
@@ -196,6 +367,19 @@ fn dismiss(start_menu: &StartMenu) {
     }
 }
 
+/// Dismisses the menu when another window takes the foreground (Alt+Tab, a click elsewhere, a
+/// launched app). Launching already moves the menu to `Clearing`, so `dismiss` ignores it then.
+fn dismiss_on_deactivation(start_menu: &StartMenu) {
+    let is_open: bool =
+        CONTROLLER.with(|cell| matches!(cell.borrow().phase, Phase::Materializing { .. } | Phase::Open));
+    if !is_open {
+        return;
+    }
+
+    CONTROLLER.with(|cell| cell.borrow_mut().dismissed_by_deactivation_at = Some(Instant::now()));
+    dismiss(start_menu);
+}
+
 /// Hides the window without destroying it, so the next show reuses the native window, OpenGL
 /// context and Dual-Kawase blur FBOs. The search is reset and progress is zeroed so the next open
 /// never flashes stale results.
@@ -219,17 +403,40 @@ fn launch(start_menu: &StartMenu, row: i32) {
         return;
     };
 
-    if let Some(app) = AppList::with(start_menu, |app_list| app_list.app(row)).flatten() {
-        apps::launch(&app);
-        // Clear the swapchain to 0.0 opacity before hiding so the next open never flashes the
-        // previous frame.
-        CONTROLLER.with(|cell| {
-            let mut controller = cell.borrow_mut();
-            set_progress(start_menu, &controller.glass_state, 0.0);
-            controller.phase = Phase::Clearing { ticks_left: 2 };
-        });
-        start_menu.window().request_redraw();
-        start_animation_timer(start_menu);
+    match AppList::with(start_menu, |app_list| app_list.activate(row)).flatten() {
+        Some(Activation::Launch(app)) => {
+            apps::launch(&app);
+            clear_and_hide(start_menu);
+        }
+        Some(Activation::Power(action)) => perform_power_action(start_menu, action),
+        None => {}
+    }
+}
+
+fn perform_power_action(start_menu: &StartMenu, action: PowerAction) {
+    power::perform(action);
+    clear_and_hide(start_menu);
+}
+
+/// Clears the swapchain to 0.0 opacity before hiding so the next open never flashes the previous
+/// frame.
+fn clear_and_hide(start_menu: &StartMenu) {
+    CONTROLLER.with(|cell| {
+        let mut controller = cell.borrow_mut();
+        set_progress(start_menu, &controller.glass_state, 0.0);
+        controller.phase = Phase::Clearing { ticks_left: 2 };
+    });
+    start_menu.window().request_redraw();
+    start_animation_timer(start_menu);
+}
+
+fn toggle_pin(start_menu: &StartMenu, row: i32) {
+    let Ok(row) = usize::try_from(row) else {
+        return;
+    };
+
+    if let Some(selected) = AppList::with(start_menu, |app_list| app_list.toggle_pin(row)).flatten() {
+        start_menu.invoke_select_row(selected as i32);
     }
 }
 
@@ -260,6 +467,14 @@ fn apply_layout(start_menu: &StartMenu, rect: MonitorRect, config: Config, glass
     start_menu.set_anchor_label(config.card_anchor.label().into());
 
     glass_state.borrow_mut().update_geometry(rect, scale, config);
+}
+
+/// The overlay is one physical pixel narrower than the monitor. A borderless window that covers
+/// the whole monitor and holds the foreground is treated as fullscreen, and switching into that
+/// mode flashes the display black. The glass renderer keeps its full-monitor viewport, so only the
+/// rightmost column goes undrawn and every other pixel stays aligned with the desktop snapshot.
+fn overlay_size(rect: MonitorRect) -> PhysicalSize {
+    PhysicalSize::new(rect.width.saturating_sub(1).max(1), rect.height)
 }
 
 fn set_progress(start_menu: &StartMenu, glass_state: &Rc<RefCell<GlassState>>, progress: f32) {

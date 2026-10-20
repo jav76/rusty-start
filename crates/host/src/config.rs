@@ -195,14 +195,20 @@ impl Config {
     }
 }
 
-fn config_file_path() -> Option<PathBuf> {
+/// Directory holding `config.toml` and `usage.tsv`: `%APPDATA%\RustyStart` on Windows,
+/// `$XDG_CONFIG_HOME/rusty-start` (or `~/.config/rusty-start`) elsewhere.
+pub fn data_dir() -> Option<PathBuf> {
     if let Some(appdata) = env::var_os("APPDATA") {
-        return Some(PathBuf::from(appdata).join("RustyStart").join("config.toml"));
+        return Some(PathBuf::from(appdata).join("RustyStart"));
     }
     if let Some(xdg) = env::var_os("XDG_CONFIG_HOME") {
-        return Some(PathBuf::from(xdg).join("rusty-start").join("config.toml"));
+        return Some(PathBuf::from(xdg).join("rusty-start"));
     }
-    env::var_os("HOME").map(|home| PathBuf::from(home).join(".config").join("rusty-start").join("config.toml"))
+    env::var_os("HOME").map(|home| PathBuf::from(home).join(".config").join("rusty-start"))
+}
+
+fn config_file_path() -> Option<PathBuf> {
+    data_dir().map(|dir| dir.join("config.toml"))
 }
 
 #[cfg(test)]
@@ -250,4 +256,3 @@ mod tests {
         assert_eq!(parsed, original);
     }
 }
-

@@ -1,7 +1,12 @@
-//! Ranks installed apps against a search query. Platform independent and allocation-light so it
-//! can run on the UI thread for every keystroke.
+//! Ranks installed apps and power actions against a search query. Platform independent and
+//! allocation-light so it can run on the UI thread for every keystroke.
 
-use crate::apps::App;
+use std::cmp::Reverse;
+
+/// Anything listed by name in the menu.
+pub trait Searchable {
+    fn name(&self) -> &str;
+}
 
 /// How well an app name matches a query. Earlier variants rank higher.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -16,6 +21,8 @@ enum Rank {
 /// Lowercased forms of an app name, computed once when the index is built.
 struct SearchKey {
     name: String,
+    /// The name without whitespace, so "shutdown" finds "Shut down".
+    compact: String,
     words: Vec<String>,
     initials: String,
 }
@@ -25,13 +32,16 @@ impl SearchKey {
         let words: Vec<String> = split_words(name).into_iter().map(str::to_lowercase).collect();
         let initials: String = words.iter().filter_map(|word| word.chars().next()).collect();
 
-        Self { name: name.to_lowercase(), words, initials }
+        let name: String = name.to_lowercase();
+        let compact: String = name.split_whitespace().collect();
+
+        Self { name, compact, words, initials }
     }
 
     fn rank(&self, query: &str, query_words: &[&str]) -> Option<Rank> {
-        if self.name == query {
+        if self.name == query || self.compact == query {
             Some(Rank::Exact)
-        } else if self.name.starts_with(query) {
+        } else if self.name.starts_with(query) || self.compact.starts_with(query) {
             Some(Rank::Prefix)
         } else if query_words.iter().all(|query_word| self.words.iter().any(|word| word.starts_with(query_word))) {
             Some(Rank::WordPrefix)
@@ -80,45 +90,58 @@ fn split_words(name: &str) -> Vec<&str> {
     words
 }
 
-/// Installed apps sorted by name, with precomputed search keys.
-#[derive(Default)]
-pub struct Index {
-    apps: Vec<App>,
+/// Items sorted by name, with precomputed search keys.
+pub struct Index<T> {
+    items: Vec<T>,
     keys: Vec<SearchKey>,
 }
 
-impl Index {
-    pub fn new(mut apps: Vec<App>) -> Self {
-        apps.sort_by_cached_key(|app| app.name.to_lowercase());
-        let keys: Vec<SearchKey> = apps.iter().map(|app| SearchKey::new(&app.name)).collect();
+impl<T> Default for Index<T> {
+    fn default() -> Self {
+        Self { items: Vec::new(), keys: Vec::new() }
+    }
+}
 
-        Self { apps, keys }
+impl<T: Searchable> Index<T> {
+    pub fn new(mut items: Vec<T>) -> Self {
+        items.sort_by_cached_key(|item| item.name().to_lowercase());
+        let keys: Vec<SearchKey> = items.iter().map(|item| SearchKey::new(item.name())).collect();
+
+        Self { items, keys }
     }
 
-    pub fn app(&self, position: usize) -> Option<&App> {
-        self.apps.get(position)
+    pub fn get(&self, position: usize) -> Option<&T> {
+        self.items.get(position)
     }
 
-    /// Returns the positions of matching apps, best match first. An empty query matches every
-    /// app in alphabetical order.
-    pub fn search(&self, query: &str) -> Vec<usize> {
+    /// Every position, in alphabetical order.
+    pub fn all(&self) -> Vec<usize> {
+        (0..self.items.len()).collect()
+    }
+
+    /// Returns the positions of matching items, best match first. Within a match quality, a higher
+    /// `score` wins, then the shorter name. An empty query matches nothing.
+    pub fn search(&self, query: &str, score: impl Fn(&T) -> u64) -> Vec<usize> {
         let query: String = query.trim().to_lowercase();
         if query.is_empty() {
-            return (0..self.apps.len()).collect();
+            return Vec::new();
         }
 
         let query_words: Vec<&str> = query.split_whitespace().collect();
-        let mut matches: Vec<(Rank, usize)> = self
+        let mut matches: Vec<(Rank, Reverse<u64>, usize, usize)> = self
             .keys
             .iter()
             .enumerate()
-            .filter_map(|(position, key)| key.rank(&query, &query_words).map(|rank| (rank, position)))
+            .filter_map(|(position, key)| {
+                let rank: Rank = key.rank(&query, &query_words)?;
+                Some((rank, Reverse(score(&self.items[position])), key.name.len(), position))
+            })
             .collect();
 
         // Positions are already alphabetical, so a stable sort keeps that as the final tiebreak.
-        matches.sort_by_key(|&(rank, position)| (rank, self.keys[position].name.len()));
+        matches.sort_by_key(|&(rank, score, length, _)| (rank, score, length));
 
-        matches.into_iter().map(|(_, position)| position).collect()
+        matches.into_iter().map(|(_, _, _, position)| position).collect()
     }
 }
 
@@ -126,19 +149,62 @@ impl Index {
 mod tests {
     use super::*;
 
-    fn index(names: &[&str]) -> Index {
-        Index::new(names.iter().map(|name| App { name: name.to_string(), launch_id: name.to_string() }).collect())
+    impl Searchable for String {
+        fn name(&self) -> &str {
+            self
+        }
     }
 
-    fn search(index: &Index, query: &str) -> Vec<String> {
-        index.search(query).into_iter().map(|position| index.app(position).unwrap().name.clone()).collect()
+    fn index(names: &[&str]) -> Index<String> {
+        Index::new(names.iter().map(ToString::to_string).collect())
+    }
+
+    fn names(index: &Index<String>, positions: Vec<usize>) -> Vec<String> {
+        positions.into_iter().map(|position| index.get(position).unwrap().clone()).collect()
+    }
+
+    fn search(index: &Index<String>, query: &str) -> Vec<String> {
+        names(index, index.search(query, |_| 0))
     }
 
     #[test]
-    fn empty_query_lists_every_app_alphabetically() {
+    fn all_lists_every_item_alphabetically() {
         let index = index(&["paint", "Calculator", "Notepad"]);
 
-        assert_eq!(search(&index, "  "), ["Calculator", "Notepad", "paint"]);
+        assert_eq!(names(&index, index.all()), ["Calculator", "Notepad", "paint"]);
+    }
+
+    #[test]
+    fn blank_query_matches_nothing() {
+        let index = index(&["Calculator"]);
+
+        assert_eq!(search(&index, "  "), Vec::<String>::new());
+    }
+
+    #[test]
+    fn higher_score_wins_within_a_rank() {
+        let index = index(&["Microsoft Edge", "Microsoft Edge Dev"]);
+        let positions: Vec<usize> =
+            index.search("edge", |name| if name.as_str() == "Microsoft Edge Dev" { 300 } else { 0 });
+
+        assert_eq!(names(&index, positions), ["Microsoft Edge Dev", "Microsoft Edge"]);
+    }
+
+    #[test]
+    fn score_never_lifts_a_weaker_match() {
+        let index = index(&["Codec Pack", "Visual Studio Code"]);
+        let positions: Vec<usize> =
+            index.search("code", |name| if name.as_str() == "Visual Studio Code" { 300 } else { 0 });
+
+        assert_eq!(names(&index, positions), ["Codec Pack", "Visual Studio Code"]);
+    }
+
+    #[test]
+    fn matches_names_typed_without_spaces() {
+        let index = index(&["Shut down", "Sign out"]);
+
+        assert_eq!(search(&index, "shutdown"), ["Shut down"]);
+        assert_eq!(search(&index, "signo"), ["Sign out"]);
     }
 
     #[test]
@@ -188,7 +254,7 @@ mod tests {
     fn unmatched_query_returns_nothing() {
         let index = index(&["Calculator", "Notepad"]);
 
-        assert!(search(&index, "zzz").is_empty());
+        assert_eq!(search(&index, "zzz"), Vec::<String>::new());
     }
 
     #[test]

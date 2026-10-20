@@ -1,9 +1,17 @@
 import { ListView } from "std-widgets.slint";
+import { MenuRow, MenuRowView, RowKind } from "menu_row.slint";
+import { PowerFlyout } from "power_flyout.slint";
+import { PowerGlyph } from "power_glyph.slint";
+
+export { MenuRow, RowKind }
 
 export component StartMenu inherits Window {
     in-out property <string> query;
-    in property <[StandardListViewItem]> apps;
+    in property <[MenuRow]> rows;
+    in property <[string]> power-labels;
     in-out property <int> selected-index: 0;
+    property <length> row-height: 48px;
+    property <bool> power-open: false;
 
     in property <length> monitor-width: 1440px;
     in property <length> monitor-height: 900px;
@@ -17,14 +25,17 @@ export component StartMenu inherits Window {
     callback dismiss();
     callback search(string);
     callback launch(int);
+    callback toggle-pin(int);
+    callback power(int);
     callback cycle-anchor();
 
     /// Clears the query, restores the full list and scrolls back to the top.
     public function reset-search() {
         root.query = "";
         root.search("");
-        root.selected-index = 0;
+        root.power-open = false;
         list.content-y = 0px;
+        root.select(0, 1);
         search-input.focus();
     }
 
@@ -32,22 +43,35 @@ export component StartMenu inherits Window {
         search-input.focus();
     }
 
-    function select(index: int) {
-        if (root.apps.length <= 0) {
+    /// Selects `index`, or the nearest selectable row past it, and scrolls it into view.
+    public function select-row(index: int) {
+        root.select(index, 1);
+    }
+
+    /// Selects the row at `index`, stepping over a section header in `direction` (1 or -1).
+    /// Headers are never adjacent and never last, so one step always lands on a selectable row.
+    function select(index: int, direction: int) {
+        if (root.rows.length <= 0) {
             root.selected-index = 0;
             return;
         }
 
-        let clamped = max(0, min(index, root.apps.length - 1));
-        root.selected-index = clamped;
+        let clamped = max(0, min(index, root.rows.length - 1));
+        let target = root.rows[clamped].kind != RowKind.header
+            ? clamped
+            : (direction < 0 && clamped > 0 ? clamped - 1 : clamped + 1);
+        root.selected-index = target;
 
-        let row-top = clamped * 48px;
-        let row-bottom = row-top + 48px;
+        // Moving up reveals the header above the first row of a section.
+        let reveal-top = target > 0 && root.rows[target - 1].kind == RowKind.header
+            ? (target - 1) * root.row-height
+            : target * root.row-height;
+        let row-bottom = (target + 1) * root.row-height;
         let visible-top = -list.content-y;
         let visible-bottom = visible-top + list.visible-height;
 
-        if (row-top < visible-top) {
-            list.content-y = -row-top;
+        if (reveal-top < visible-top) {
+            list.content-y = -reveal-top;
         } else if (row-bottom > visible-bottom) {
             list.content-y = -(row-bottom - list.visible-height);
         }
@@ -69,15 +93,23 @@ export component StartMenu inherits Window {
         // the menu while the text cursor stays in the search field.
         capture-key-pressed(event) => {
             if (event.text == Key.Escape) {
-                root.dismiss();
+                if (root.power-open) {
+                    root.power-open = false;
+                } else {
+                    root.dismiss();
+                }
                 return accept;
             }
             if (event.text == Key.DownArrow) {
-                root.select(root.selected-index + 1);
+                root.select(root.selected-index + 1, 1);
                 return accept;
             }
             if (event.text == Key.UpArrow) {
-                root.select(root.selected-index - 1);
+                root.select(root.selected-index - 1, -1);
+                return accept;
+            }
+            if (event.modifiers.control && (event.text == "p" || event.text == "P")) {
+                root.toggle-pin(root.selected-index);
                 return accept;
             }
             if (event.text == Key.Return) {
@@ -165,8 +197,8 @@ export component StartMenu inherits Window {
                                     single-line: true;
                                     edited => {
                                         root.search(self.text);
-                                        root.selected-index = 0;
                                         list.content-y = 0px;
+                                        root.select(0, 1);
                                     }
                                     accepted => {
                                         root.launch(root.selected-index);
@@ -220,57 +252,78 @@ export component StartMenu inherits Window {
                 list := ListView {
                     vertical-stretch: 1;
 
-                    for item[index] in root.apps : Rectangle {
-                        height: 48px;
+                    for item[index] in root.rows: MenuRowView {
+                        height: root.row-height;
                         width: parent.width;
-                        background: transparent;
+                        entry: item;
+                        selected: index == root.selected-index;
+                        activate => {
+                            root.selected-index = index;
+                            root.launch(index);
+                        }
+                        toggle-pin => {
+                            root.toggle-pin(index);
+                        }
+                    }
+                }
 
-                        Rectangle {
-                            x: 2px;
-                            y: 2px;
-                            width: parent.width - 4px;
-                            height: 44px;
-                            border-radius: 12px;
-                            background: index == root.selected-index
-                                ? #7cc8ff36
-                                : (row-touch.has-hover ? #ffffff1c : transparent);
-                            border-width: (index == root.selected-index || row-touch.has-hover) ? 1px : 0px;
-                            border-color: index == root.selected-index ? #aee6ff88 : #ffffff2e;
+                HorizontalLayout {
+                    height: 40px;
+                    spacing: 12px;
 
-                            HorizontalLayout {
-                                padding-left: 14px;
-                                padding-right: 14px;
-                                spacing: 12px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "Ctrl+P pins the selected app";
+                        color: #c8daf877;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
 
-                                Rectangle {
-                                    width: 3px;
-                                    height: 18px;
-                                    y: (parent.height - self.height) / 2;
-                                    border-radius: 1.5px;
-                                    background: index == root.selected-index ? #7dd3fc : transparent;
-                                }
-
-                                Text {
-                                    horizontal-stretch: 1;
-                                    text: item.text;
-                                    color: index == root.selected-index ? #ffffff : #e6f0ff;
-                                    font-size: 15px;
-                                    font-weight: index == root.selected-index ? 600 : 400;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                            }
+                    power-button := Rectangle {
+                        width: 40px;
+                        height: 40px;
+                        border-radius: 12px;
+                        background: root.power-open ? #ffffff2c : (power-touch.has-hover ? #ffffff22 : #ffffff12);
+                        border-width: 1px;
+                        border-color: power-touch.has-hover || root.power-open ? #9be2ff77 : #ffffff26;
+                        accessible-role: button;
+                        accessible-label: "Power options";
+                        accessible-action-default => {
+                            root.power-open = !root.power-open;
                         }
 
-                        row-touch := TouchArea {
-                            width: 100%;
-                            height: 100%;
+                        PowerGlyph {
+                            width: 20px;
+                            height: 20px;
+                            tint: #b8d4ff;
+                        }
+
+                        power-touch := TouchArea {
                             clicked => {
-                                root.selected-index = index;
-                                root.launch(index);
+                                root.power-open = !root.power-open;
+                                search-input.focus();
                             }
                         }
                     }
+                }
+            }
+
+            // While the power flyout is open, a click anywhere else in the card closes it.
+            if root.power-open: TouchArea {
+                width: 100%;
+                height: 100%;
+                clicked => {
+                    root.power-open = false;
+                }
+            }
+
+            if root.power-open: PowerFlyout {
+                x: parent.width - self.width - 24px;
+                y: parent.height - 24px - 40px - 8px - self.height;
+                labels: root.power-labels;
+                choose(index) => {
+                    root.power-open = false;
+                    root.power(index);
                 }
             }
         }

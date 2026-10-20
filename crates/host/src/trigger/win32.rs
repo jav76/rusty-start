@@ -140,7 +140,7 @@ pub fn install(on_toggle: impl Fn() + Send + 'static) -> Result<TriggerGuard> {
 
     let thread: JoinHandle<()> = thread::Builder::new()
         .name("rusty-start-trigger".into())
-        .spawn(move || run_trigger_thread(on_toggle, ready_sender))
+        .spawn(move || run_trigger_thread(on_toggle, &ready_sender))
         .context("failed to spawn the trigger thread")?;
 
     match ready_receiver.recv() {
@@ -156,7 +156,7 @@ pub fn install(on_toggle: impl Fn() + Send + 'static) -> Result<TriggerGuard> {
     }
 }
 
-fn run_trigger_thread(on_toggle: impl Fn(), ready: mpsc::Sender<Result<u32>>) {
+fn run_trigger_thread(on_toggle: impl Fn(), ready: &mpsc::Sender<Result<u32>>) {
     let mut window: TriggerWindow = match TriggerWindow::create() {
         Ok(window) => window,
         Err(error) => {
@@ -180,7 +180,7 @@ fn run_message_loop(window: &mut TriggerWindow, on_toggle: impl Fn()) {
     loop {
         // SAFETY: `message` is a valid out-parameter. A `None` window filter receives every
         // message for this thread, including the WM_QUIT posted by TriggerGuard.
-        let result = unsafe { GetMessageW(&mut message, None, 0, 0) };
+        let result = unsafe { GetMessageW(&raw mut message, None, 0, 0) };
 
         // 0 means WM_QUIT was received and -1 means the call failed; both end the loop.
         if result.0 <= 0 {
@@ -204,7 +204,7 @@ fn run_message_loop(window: &mut TriggerWindow, on_toggle: impl Fn()) {
         }
 
         // SAFETY: `message` was filled in by the GetMessageW call above.
-        unsafe { DispatchMessageW(&message) };
+        unsafe { DispatchMessageW(&raw const message) };
     }
 }
 
@@ -258,14 +258,7 @@ impl TriggerWindow {
             None
         };
 
-        let window = Self {
-            hwnd,
-            toggle_message,
-            taskbar_created_msg,
-            keyboard_hook,
-            taskbar_hook,
-            _class: class,
-        };
+        let window = Self { hwnd, toggle_message, taskbar_created_msg, keyboard_hook, taskbar_hook, _class: class };
 
         // SAFETY: `window.hwnd` is a live window owned by this thread.
         let hotkey = unsafe {
@@ -371,7 +364,10 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
 /// Sends a silent `VK_NONAME` (`0xFC`) key-down and key-up before the `VK_LWIN` / `VK_RWIN`
 /// release reaches `explorer.exe`, convincing Windows that a `Win+<Key>` chord occurred so it
 /// does not open the built-in Start menu.
-fn suppress_native_start_menu() {
+///
+/// The menu window also calls this when the Windows key goes down while it has keyboard focus,
+/// because the low-level hook does not see keys sent to the host's own window.
+pub fn suppress_native_start_menu() {
     let inputs: [INPUT; 2] = [
         INPUT {
             r#type: INPUT_KEYBOARD,
@@ -381,9 +377,7 @@ fn suppress_native_start_menu() {
         },
         INPUT {
             r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT { wVk: VK_NONAME, dwFlags: KEYEVENTF_KEYUP, ..Default::default() },
-            },
+            Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_NONAME, dwFlags: KEYEVENTF_KEYUP, ..Default::default() } },
         },
     ];
 
@@ -413,7 +407,7 @@ impl WindowClass {
         };
 
         // SAFETY: `class` is fully initialized and `name` outlives the call.
-        if unsafe { RegisterClassExW(&class) } == 0 {
+        if unsafe { RegisterClassExW(&raw const class) } == 0 {
             return Err(windows::core::Error::from_thread()).context("failed to register the window class");
         }
 

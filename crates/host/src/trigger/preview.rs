@@ -1,3 +1,6 @@
+/// There is no system Start menu to suppress outside Windows.
+pub fn suppress_native_start_menu() {}
+
 /// Placeholder guard so the host's startup code is identical on every platform.
 pub struct TriggerGuard;
 

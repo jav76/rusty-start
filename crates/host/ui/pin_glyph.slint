@@ -1,0 +1,13 @@
+/// Pushpin outline, filled while the app is pinned.
+export component PinGlyph inherits Path {
+    in property <bool> filled;
+    in property <color> tint: #e6f0ff;
+
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M 9 3 L 15 3 L 14 9.5 L 17.5 13.5 L 6.5 13.5 L 10 9.5 Z M 12 13.5 L 12 21";
+    stroke: root.tint;
+    stroke-width: 1.6px;
+    stroke-line-cap: round;
+    fill: root.filled ? root.tint : transparent;
+}

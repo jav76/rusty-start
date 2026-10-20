@@ -1,0 +1,48 @@
+/// Stacked power actions shown above the power button. Labels come from Rust, so they match the
+/// power actions listed in search results.
+export component PowerFlyout inherits Rectangle {
+    in property <[string]> labels;
+
+    callback choose(int);
+
+    width: 180px;
+    height: root.labels.length * 40px + 12px;
+    border-radius: 14px;
+    // The glass shader draws only the card body, so the flyout carries its own frosted fill.
+    background: #1b2638f2;
+    border-width: 1px;
+    border-color: #ffffff30;
+    drop-shadow-blur: 18px;
+    drop-shadow-color: #00000066;
+
+    VerticalLayout {
+        padding: 6px;
+
+        for label[index] in root.labels: Rectangle {
+            height: 40px;
+            border-radius: 10px;
+            background: action-touch.has-hover ? #ffffff1c : transparent;
+            accessible-role: button;
+            accessible-label: label;
+            accessible-action-default => {
+                root.choose(index);
+            }
+
+            Text {
+                x: 14px;
+                width: parent.width - 28px;
+                height: 100%;
+                text: label;
+                color: #e6f0ff;
+                font-size: 14px;
+                vertical-alignment: center;
+            }
+
+            action-touch := TouchArea {
+                clicked => {
+                    root.choose(index);
+                }
+            }
+        }
+    }
+}

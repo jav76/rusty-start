@@ -1,0 +1,12 @@
+/// Standard power symbol: an open ring with a vertical bar.
+export component PowerGlyph inherits Path {
+    in property <color> tint: #e6f0ff;
+
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M 7.05 8.05 A 7 7 0 1 0 16.95 8.05 M 12 4 L 12 12";
+    stroke: root.tint;
+    stroke-width: 1.8px;
+    stroke-line-cap: round;
+    fill: transparent;
+}
