@@ -222,12 +222,11 @@ mod tests {
     use super::*;
 
     #[test]
-    #[expect(clippy::float_cmp, reason = "the expected values are exact in binary floating point")]
     fn default_anchor_is_middle_left() {
         let config = Config::default();
 
         assert_eq!(config.card_anchor, CardAnchor::MiddleLeft);
-        assert_eq!(config.edge_margin, 48.0);
+        assert!((config.edge_margin - DEFAULT_EDGE_MARGIN).abs() < f32::EPSILON);
         assert!(config.use_win_key);
         assert!(config.use_taskbar_hook);
     }

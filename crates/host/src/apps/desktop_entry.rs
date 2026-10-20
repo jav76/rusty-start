@@ -234,8 +234,8 @@ Exec=konsole --new-window
     fn locale_variants_follow_the_specification_order() {
         assert_eq!(locale_variants("sr_YU.UTF-8@Latn"), ["sr_YU@Latn", "sr_YU", "sr@Latn", "sr"]);
         assert_eq!(locale_variants("en_US.UTF-8"), ["en_US", "en"]);
-        assert!(locale_variants("C.UTF-8").is_empty());
-        assert!(locale_variants("").is_empty());
+        assert_eq!(locale_variants("C.UTF-8"), Vec::<String>::new());
+        assert_eq!(locale_variants(""), Vec::<String>::new());
     }
 
     #[test]

@@ -853,38 +853,42 @@ void main() {
 "#;
 
 #[cfg(test)]
-#[expect(clippy::float_cmp, reason = "the expected values are exact in binary floating point")]
 mod tests {
     use super::*;
 
+    fn assert_close(actual: &[f32], expected: &[f32]) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual_value, expected_value) in actual.iter().zip(expected) {
+            assert!((actual_value - expected_value).abs() < 1e-5, "{actual:?} != {expected:?}");
+        }
+    }
+
     #[test]
     fn cubic_out_interpolates_monotonically_between_zero_and_one() {
-        assert_eq!(cubic_out(0.0), 0.0);
-        assert_eq!(cubic_out(1.0), 1.0);
+        assert_close(&[cubic_out(0.0), cubic_out(1.0)], &[0.0, 1.0]);
         assert!(cubic_out(0.25) > 0.25);
         assert!(cubic_out(0.5) > cubic_out(0.25));
-        assert_eq!(cubic_out(-1.0), 0.0);
-        assert_eq!(cubic_out(2.0), 1.0);
+        assert_close(&[cubic_out(-1.0), cubic_out(2.0)], &[0.0, 1.0]);
     }
 
     #[test]
     fn computes_physical_card_rectangle_for_hidpi_scale() {
         let rect = compute_card_rect_px(48.0, 90.0, 1.5);
 
-        assert_eq!(rect, [72.0, 135.0, 960.0, 1080.0]);
+        assert_close(&rect, &[72.0, 135.0, 960.0, 1080.0]);
     }
 
     #[test]
     fn glass_state_starts_transparent_and_locks_viewport_to_monitor_rect() {
         let mut state = GlassState::default();
-        assert_eq!(state.progress, 0.0);
+        assert_close(&[state.progress], &[0.0]);
         assert!(!state.zero_frame_presented);
 
         let monitor = MonitorRect { x: -1920, y: 0, width: 2560, height: 1440 };
         state.update_geometry(monitor, 1.25, Config::default());
 
         assert_eq!(state.monitor_rect, monitor);
-        assert_eq!(state.viewport_px, [2560.0, 1440.0]);
-        assert_eq!(state.scale_factor, 1.25);
+        assert_close(&state.viewport_px, &[2560.0, 1440.0]);
+        assert_close(&[state.scale_factor], &[1.25]);
     }
 }
