@@ -11,6 +11,7 @@
 use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::time::Instant;
 
 use anyhow::{Result, bail};
 use glow::{
@@ -34,6 +35,9 @@ pub struct GlassState {
     pub viewport_px: [f32; 2],
     pub scale_factor: f32,
     pub config: Config,
+    /// When the menu last started to show. Debug builds, and builds run with `RUSTY_START_TRACE_OPEN`
+    /// set, log the time to its first visible frame.
+    pub shown_at: Option<Instant>,
 }
 
 impl Default for GlassState {
@@ -47,6 +51,7 @@ impl Default for GlassState {
             viewport_px: [1440.0, 900.0],
             scale_factor: 1.0,
             config: Config::default(),
+            shown_at: None,
         }
     }
 }
@@ -72,6 +77,19 @@ impl GlassState {
 pub fn compute_card_rect_px(logical_x: f32, logical_y: f32, scale_factor: f32) -> [f32; 4] {
     let scale: f32 = scale_factor.max(0.5);
     [logical_x * scale, logical_y * scale, CARD_WIDTH * scale, CARD_HEIGHT * scale]
+}
+
+fn log_first_visible_frame(state: &mut GlassState) {
+    if (cfg!(debug_assertions) || std::env::var_os("RUSTY_START_TRACE_OPEN").is_some())
+        && state.progress > 0.0
+        && let Some(shown_at) = state.shown_at.take()
+    {
+        eprintln!(
+            "first visible frame {:.1} ms after show, at progress {:.2}",
+            shown_at.elapsed().as_secs_f64() * 1000.0,
+            state.progress
+        );
+    }
 }
 
 /// Cubic-out easing curve used for both the `180ms` Optical Condense and `100ms` dismiss transitions.
@@ -111,6 +129,7 @@ pub fn install_rendering_notifier(start_menu: &StartMenu, state: Rc<RefCell<Glas
                     }
 
                     active_renderer.render_frame(&mut borrowed);
+                    log_first_visible_frame(&mut borrowed);
                 }
             }
             RenderingState::AfterRendering => {}

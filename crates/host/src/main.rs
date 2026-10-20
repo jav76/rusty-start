@@ -5,6 +5,8 @@ mod app_list;
 mod apps;
 mod backdrop;
 mod config;
+#[cfg(backend_linux)]
+mod dbus;
 mod glass;
 mod instance;
 mod menu;

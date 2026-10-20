@@ -16,6 +16,7 @@ glow = "0.18.0"
 slint = { version = "1.18.1", default-features = false }
 slint-build = "1.18.1"
 windows = "0.62.2"
+zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 rusty-start-protocol = { path = "crates/protocol" }
 
 [workspace.lints.rust]

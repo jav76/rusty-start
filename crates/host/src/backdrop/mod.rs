@@ -2,24 +2,36 @@
 //!
 //! On Windows, captures the monitor containing the mouse cursor (`rcMonitor`, including the taskbar)
 //! via a reusable GDI DIB section so the GPU shader can fog the screen and refract desktop pixels
-//! through the Liquid-Glass Card. On other backends, generates a synthetic desktop scene so the
-//! shader pipeline can be exercised in preview builds.
+//! through the Liquid-Glass Card. On Linux the overlay is a fullscreen Wayland window. Preview
+//! builds, and Linux until KWin capture lands, generate a synthetic desktop scene so the shader
+//! pipeline can be exercised.
 
 #[cfg(backend_win32)]
 mod win32;
 #[cfg(backend_win32)]
 pub use win32::{
-    Capturer, OverlayOwner, active_monitor_rect, configure_overlay_window, focus_overlay_window, install_backend,
-    place_overlay_window,
+    Capturer, OVERLAY_FOLLOWS_WINDOW_SIZE, OverlayOwner, active_monitor_rect, configure_overlay_window,
+    focus_overlay_window, install_backend, place_overlay_window,
+};
+
+#[cfg(backend_linux)]
+mod linux;
+#[cfg(backend_linux)]
+pub use linux::{
+    Capturer, OVERLAY_FOLLOWS_WINDOW_SIZE, OverlayOwner, active_monitor_rect, configure_overlay_window,
+    focus_overlay_window, install_backend, place_overlay_window,
+};
+
+#[cfg(backend_preview)]
+mod preview;
+#[cfg(backend_preview)]
+pub use preview::{
+    Capturer, OVERLAY_FOLLOWS_WINDOW_SIZE, OverlayOwner, active_monitor_rect, configure_overlay_window,
+    focus_overlay_window, install_backend, place_overlay_window,
 };
 
 #[cfg(not(backend_win32))]
-mod preview;
-#[cfg(not(backend_win32))]
-pub use preview::{
-    Capturer, OverlayOwner, active_monitor_rect, configure_overlay_window, focus_overlay_window, install_backend,
-    place_overlay_window,
-};
+mod synthetic;
 
 /// Virtual-screen rectangle of a monitor in physical pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

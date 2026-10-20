@@ -108,6 +108,9 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
             winit::event::WindowEvent::KeyboardInput { event, .. } if trigger::MENU_HANDLES_WIN_KEY => {
                 handle_win_key(&start_menu, event);
             }
+            winit::event::WindowEvent::Resized(size) if backdrop::OVERLAY_FOLLOWS_WINDOW_SIZE => {
+                follow_window_size(&start_menu, size.width, size.height);
+            }
             _ => {}
         }
         EventResult::Propagate
@@ -156,6 +159,24 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
             cycle_anchor(&start_menu);
         }
     });
+}
+
+/// Lays the menu out for the size the compositor gave the fullscreen overlay.
+fn follow_window_size(start_menu: &StartMenu, width: u32, height: u32) {
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    CONTROLLER.with(|cell| {
+        let mut controller = cell.borrow_mut();
+        let rect = MonitorRect { x: 0, y: 0, width, height };
+        if controller.monitor_rect == rect {
+            return;
+        }
+        controller.monitor_rect = rect;
+        apply_layout(start_menu, rect, controller.config, &controller.glass_state);
+    });
+    start_menu.window().request_redraw();
 }
 
 /// While the menu has keyboard focus the trigger's keyboard hook never sees its keys, so the window
@@ -305,6 +326,7 @@ fn show(start_menu: &StartMenu) {
     CONTROLLER.with(|cell| {
         let mut controller = cell.borrow_mut();
         controller.timer.stop();
+        controller.glass_state.borrow_mut().shown_at = Some(Instant::now());
 
         // Capture a fresh desktop snapshot only while the Start menu window is hidden so we never
         // capture our own Fog Veil.

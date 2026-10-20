@@ -22,6 +22,12 @@ pub const DBUS_OBJECT_PATH: &str = "/io/github/jav76/RustyStart";
 ///   `XDG_ACTIVATION_TOKEN`, or an empty string when it has none.
 pub const DBUS_INTERFACE: &str = "io.github.jav76.RustyStart";
 
+/// `Toggle()` method of `DBUS_INTERFACE`.
+pub const DBUS_TOGGLE_METHOD: &str = "Toggle";
+
+/// `ToggleWithToken(s token)` method of `DBUS_INTERFACE`.
+pub const DBUS_TOGGLE_WITH_TOKEN_METHOD: &str = "ToggleWithToken";
+
 /// Window class of the host's hidden trigger window.
 ///
 /// The hook locates the window with `FindWindowW(MESSAGE_WINDOW_CLASS, None)`.

@@ -1,17 +1,23 @@
 //! Decides when the menu opens.
 //!
 //! On Windows a hidden window listens for the Windows key, a development hotkey and the toggle
-//! message other processes post. On other platforms there is no global trigger yet, so the menu
-//! opens once at startup to allow UI iteration.
+//! message other processes post. On Linux the host serves a D-Bus interface that compositor
+//! bindings and second launches call. Preview builds have no global trigger, so the menu opens
+//! once at startup to allow UI iteration.
 
 #[cfg(backend_win32)]
 mod win32;
 #[cfg(backend_win32)]
 pub use win32::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, suppress_native_start_menu};
 
-#[cfg(not(backend_win32))]
+#[cfg(backend_linux)]
+mod linux;
+#[cfg(backend_linux)]
+pub use linux::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, suppress_native_start_menu};
+
+#[cfg(backend_preview)]
 mod preview;
-#[cfg(not(backend_win32))]
+#[cfg(backend_preview)]
 pub use preview::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, suppress_native_start_menu};
 
 /// A key event seen by the menu window while it has keyboard focus.

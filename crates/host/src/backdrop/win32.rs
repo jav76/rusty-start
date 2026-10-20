@@ -149,6 +149,9 @@ pub fn install_backend() -> Result<OverlayOwner> {
     Ok(owner)
 }
 
+/// The overlay is sized from the captured monitor, not from window resize events.
+pub const OVERLAY_FOLLOWS_WINDOW_SIZE: bool = false;
+
 /// Covers the monitor with the overlay, one physical pixel narrower than the monitor. A borderless
 /// window that covers the whole monitor and holds the foreground is treated as fullscreen, and
 /// switching into that mode flashes the display black. The glass renderer keeps its full-monitor

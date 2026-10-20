@@ -3726,6 +3726,7 @@ dependencies = [
  "slint",
  "slint-build",
  "windows",
+ "zbus",
 ]
 
 [[package]]
