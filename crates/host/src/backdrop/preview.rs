@@ -28,6 +28,11 @@ pub fn place_overlay_window(window: &slint::Window, rect: MonitorRect) {
     window.set_size(PhysicalSize::new(rect.width, rect.height));
 }
 
+/// The overlay is not fullscreen on this backend, so it never needs restoring.
+pub fn keep_overlay_fullscreen(_window: &slint::Window) -> bool {
+    true
+}
+
 pub fn configure_overlay_window() {}
 
 pub fn focus_overlay_window() -> bool {

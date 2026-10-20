@@ -1,4 +1,4 @@
-//! Synthetic desktop backdrop for preview builds, and for Linux builds until desktop capture lands.
+//! Synthetic desktop backdrop for preview builds.
 //!
 //! Generates a colorful multi-window desktop wallpaper with crisp edges and grid lines so the
 //! dual-Kawase fog ramp and SDF bevel refraction are clearly visible without a real desktop.
@@ -16,12 +16,22 @@ pub const SYNTHETIC_MONITOR_RECT: MonitorRect =
 #[derive(Default)]
 pub struct Capturer {
     cached: Option<MonitorSnapshot>,
+    ready: Option<Result<MonitorSnapshot>>,
 }
 
 impl Capturer {
+    /// The synthetic scene is ready at once, so `poll_capture` returns it on the next call.
+    pub fn start_capture(&mut self) {
+        self.ready = Some(self.capture_active_monitor());
+    }
+
+    pub fn poll_capture(&mut self) -> Option<Result<MonitorSnapshot>> {
+        self.ready.take()
+    }
+
     #[expect(clippy::unnecessary_wraps, reason = "signature matches the fallible win32 backend")]
     #[expect(clippy::many_single_char_names, reason = "pixel math in shader-style notation")]
-    pub fn capture_active_monitor(&mut self) -> Result<MonitorSnapshot> {
+    fn capture_active_monitor(&mut self) -> Result<MonitorSnapshot> {
         if let Some(snapshot) = &self.cached {
             return Ok(snapshot.clone());
         }

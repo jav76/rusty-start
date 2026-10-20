@@ -28,6 +28,9 @@ use crate::config::{CARD_HEIGHT, CARD_WIDTH, Config};
 /// callback during `RenderingState::BeforeRendering`.
 pub struct GlassState {
     pub pending_snapshot: Option<MonitorSnapshot>,
+    /// Draw this open as Plain Glass: no desktop snapshot arrived, so the veil and card are tinted
+    /// over the live desktop without blur or refraction.
+    pub plain: bool,
     pub progress: f32,
     pub zero_frame_presented: bool,
     pub monitor_rect: MonitorRect,
@@ -44,6 +47,7 @@ impl Default for GlassState {
     fn default() -> Self {
         Self {
             pending_snapshot: None,
+            plain: false,
             progress: 0.0,
             zero_frame_presented: false,
             monitor_rect: MonitorRect { x: 0, y: 0, width: 1440, height: 900 },
@@ -162,6 +166,7 @@ struct CompositeUniforms {
     card_rect: Option<UniformLocation>,
     progress: Option<UniformLocation>,
     dpi: Option<UniformLocation>,
+    plain: Option<UniformLocation>,
 }
 
 struct RenderTarget {
@@ -236,6 +241,7 @@ impl GlassRenderer {
                 card_rect: gl.get_uniform_location(composite_prog, "u_card_rect"),
                 progress: gl.get_uniform_location(composite_prog, "u_progress"),
                 dpi: gl.get_uniform_location(composite_prog, "u_dpi"),
+                plain: gl.get_uniform_location(composite_prog, "u_plain"),
             };
 
             Ok(Self {
@@ -284,9 +290,7 @@ impl GlassRenderer {
                 // `BeforeRendering`, so leaving the backbuffer untouched presents a 100%
                 // transparent frame over the live desktop.
                 state.zero_frame_presented = true;
-            } else if self.has_desktop_tex
-                && let Some(pyramid) = &self.pyramid
-            {
+            } else if let Some(textures) = self.composite_textures(state.plain) {
                 state.zero_frame_presented = false;
                 let vp_w: i32 = (state.viewport_px[0] as i32).max(1);
                 let vp_h: i32 = (state.viewport_px[1] as i32).max(1);
@@ -295,22 +299,24 @@ impl GlassRenderer {
                 gl.viewport(0, 0, vp_w, vp_h);
                 gl.use_program(Some(self.composite_prog));
 
+                let [fog, deep, sharp, mild] = textures;
                 gl.active_texture(glow::TEXTURE0);
-                gl.bind_texture(glow::TEXTURE_2D, Some(pyramid.up_half.tex));
+                gl.bind_texture(glow::TEXTURE_2D, Some(fog));
                 gl.uniform_1_i32(self.composite_uniforms.blur_fog.as_ref(), 0);
 
                 gl.active_texture(glow::TEXTURE1);
-                gl.bind_texture(glow::TEXTURE_2D, Some(pyramid.up_quarter.tex));
+                gl.bind_texture(glow::TEXTURE_2D, Some(deep));
                 gl.uniform_1_i32(self.composite_uniforms.blur_deep.as_ref(), 1);
 
                 gl.active_texture(glow::TEXTURE2);
-                gl.bind_texture(glow::TEXTURE_2D, Some(self.desktop_tex));
+                gl.bind_texture(glow::TEXTURE_2D, Some(sharp));
                 gl.uniform_1_i32(self.composite_uniforms.sharp.as_ref(), 2);
 
                 gl.active_texture(glow::TEXTURE3);
-                gl.bind_texture(glow::TEXTURE_2D, Some(pyramid.down_half.tex));
+                gl.bind_texture(glow::TEXTURE_2D, Some(mild));
                 gl.uniform_1_i32(self.composite_uniforms.blur_mild.as_ref(), 3);
 
+                gl.uniform_1_f32(self.composite_uniforms.plain.as_ref(), if state.plain { 1.0 } else { 0.0 });
                 gl.uniform_2_f32(self.composite_uniforms.resolution.as_ref(), vp_w as f32, vp_h as f32);
                 gl.uniform_4_f32(
                     self.composite_uniforms.card_rect.as_ref(),
@@ -352,6 +358,16 @@ impl GlassRenderer {
                 gl.enable(glow::STENCIL_TEST);
             }
         }
+    }
+
+    /// Textures bound as `[fog, deep, sharp, mild]`, or `None` when there is nothing to draw. Plain
+    /// Glass samples none of them, so the desktop texture stands in for every slot.
+    fn composite_textures(&self, plain: bool) -> Option<[Texture; 4]> {
+        if plain {
+            return Some([self.desktop_tex; 4]);
+        }
+        let pyramid: &BlurPyramid = self.pyramid.as_ref().filter(|_| self.has_desktop_tex)?;
+        Some([pyramid.up_half.tex, pyramid.up_quarter.tex, self.desktop_tex, pyramid.down_half.tex])
     }
 
     fn upload_and_blur_snapshot(&mut self, snapshot: &MonitorSnapshot) {
@@ -682,6 +698,13 @@ uniform vec2 u_resolution;
 uniform vec4 u_card_rect;
 uniform float u_progress;
 uniform float u_dpi;
+// 1.0 draws Plain Glass: no snapshot, so the Fog Veil and Liquid-Glass Card are tinted over the
+// live desktop the transparent window shows, without blur or refraction.
+uniform float u_plain;
+
+const float PLAIN_VEIL_OPACITY = 0.55;
+const float PLAIN_CARD_OPACITY = 0.92;
+const vec3 PLAIN_GLASS_BASE = vec3(0.07, 0.09, 0.15);
 
 float sd_rounded_box(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + vec2(r);
@@ -728,6 +751,11 @@ void main() {
     // The veil turns opaque while it still shows the unblurred snapshot, which matches the live
     //    desktop, so the handoff between the two is invisible in both directions.
     float veil_alpha = smoothstep(0.0, 0.1, ease);
+    bool plain = u_plain > 0.5;
+    if (plain) {
+        outer_fog = mist_tint;
+        veil_alpha = PLAIN_VEIL_OPACITY * ease;
+    }
 
     // 2. Floating 640x720 Liquid-Glass Card SDF geometry (in top-left physical coordinates).
     vec2 frag_tl = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
@@ -777,6 +805,11 @@ void main() {
             texture(u_blur_fog, uv_b).b
         );
 
+        if (plain) {
+            refracted_deep = PLAIN_GLASS_BASE;
+            refracted_edge = PLAIN_GLASS_BASE;
+        }
+
         // Clearer lens refraction near the curved bevel, deep velvety frost inside the card body.
         vec3 glass_color = mix(refracted_deep, refracted_edge, lens_curve * 0.65);
 
@@ -810,8 +843,9 @@ void main() {
         glass_color += vec3(grain);
 
         float card_mask = smoothstep(0.75, -0.75, dist) * clamp(ease * 1.15, 0.0, 1.0);
-        premul_out = mix(premul_out, glass_color, card_mask);
-        alpha_out = mix(alpha_out, 1.0, card_mask);
+        float card_opacity = plain ? PLAIN_CARD_OPACITY : 1.0;
+        premul_out = mix(premul_out, glass_color * card_opacity, card_mask);
+        alpha_out = mix(alpha_out, card_opacity, card_mask);
     }
 
     frag_color = vec4(premul_out, alpha_out);

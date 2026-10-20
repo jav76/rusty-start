@@ -25,6 +25,9 @@ use crate::usage::{self, Usage};
 const MATERIALIZE_DURATION: Duration = Duration::from_millis(180);
 const DEMATERIALIZE_DURATION: Duration = Duration::from_millis(100);
 const ANIMATION_INTERVAL: Duration = Duration::from_millis(8);
+/// How long an open waits for the desktop snapshot before it condenses as Plain Glass. The window
+/// is already shown and focused while it waits, so typing is never lost.
+const SNAPSHOT_WAIT: Duration = Duration::from_millis(100);
 /// Toggles arriving this soon after a focus-loss dismiss are ignored. Clicking the taskbar Start
 /// button deactivates the menu on mouse-down and posts the toggle on mouse-up, which would
 /// otherwise reopen the menu the click just closed.
@@ -42,10 +45,21 @@ thread_local! {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Phase {
     Hidden,
-    Materializing { started_at: Instant },
+    /// Shown fully transparent with keyboard focus while the desktop snapshot is captured.
+    AwaitingSnapshot {
+        started_at: Instant,
+    },
+    Materializing {
+        started_at: Instant,
+    },
     Open,
-    Dematerializing { started_at: Instant, from_progress: f32 },
-    Clearing { ticks_left: u8 },
+    Dematerializing {
+        started_at: Instant,
+        from_progress: f32,
+    },
+    Clearing {
+        ticks_left: u8,
+    },
 }
 
 struct MenuController {
@@ -108,7 +122,9 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
             winit::event::WindowEvent::KeyboardInput { event, .. } if trigger::MENU_HANDLES_WIN_KEY => {
                 handle_win_key(&start_menu, event);
             }
-            winit::event::WindowEvent::Resized(size) if backdrop::OVERLAY_FOLLOWS_WINDOW_SIZE => {
+            winit::event::WindowEvent::Resized(size)
+                if backdrop::OVERLAY_FOLLOWS_WINDOW_SIZE && backdrop::keep_overlay_fullscreen(start_menu.window()) =>
+            {
                 follow_window_size(&start_menu, size.width, size.height);
             }
             _ => {}
@@ -341,14 +357,11 @@ fn show(start_menu: &StartMenu) {
 
         // Capture a fresh desktop snapshot only while the Start menu window is hidden so we never
         // capture our own Fog Veil.
-        if !start_menu.window().is_visible() {
-            match controller.capturer.capture_active_monitor() {
-                Ok(snapshot) => {
-                    controller.monitor_rect = snapshot.rect;
-                    controller.glass_state.borrow_mut().pending_snapshot = Some(snapshot);
-                }
-                Err(error) => eprintln!("failed to capture the active monitor backdrop: {error:#}"),
-            }
+        let capturing: bool = !start_menu.window().is_visible();
+        let mut snapshot_ready: bool = true;
+        if capturing {
+            controller.capturer.start_capture();
+            snapshot_ready = take_snapshot(&mut controller);
         }
 
         if let Some(apps) = controller.pending_apps.take() {
@@ -362,7 +375,11 @@ fn show(start_menu: &StartMenu) {
 
         set_progress(start_menu, &controller.glass_state, 0.0);
         start_menu.invoke_reset_search();
-        controller.phase = Phase::Materializing { started_at: Instant::now() };
+        controller.phase = if snapshot_ready {
+            Phase::Materializing { started_at: Instant::now() }
+        } else {
+            Phase::AwaitingSnapshot { started_at: Instant::now() }
+        };
     });
 
     if let Err(error) = start_menu.show() {
@@ -378,6 +395,31 @@ fn show(start_menu: &StartMenu) {
     start_menu.invoke_focus_search();
     start_menu.window().request_redraw();
     start_animation_timer(start_menu);
+}
+
+/// Hands a finished capture to the glass renderer, or marks the open as Plain Glass when it failed.
+/// Returns whether a result arrived.
+fn take_snapshot(controller: &mut MenuController) -> bool {
+    let Some(result) = controller.capturer.poll_capture() else {
+        return false;
+    };
+    match result {
+        Ok(snapshot) => {
+            if !backdrop::OVERLAY_FOLLOWS_WINDOW_SIZE {
+                controller.monitor_rect = snapshot.rect;
+            }
+            let mut glass_state = controller.glass_state.borrow_mut();
+            glass_state.pending_snapshot = Some(snapshot);
+            glass_state.plain = false;
+        }
+        Err(error) => {
+            if !error.is::<backdrop::CaptureUnavailable>() {
+                eprintln!("failed to capture the active monitor backdrop: {error:#}");
+            }
+            controller.glass_state.borrow_mut().plain = true;
+        }
+    }
+    true
 }
 
 /// Runs the `100ms` reverse condense animation before hiding the window.
@@ -403,8 +445,9 @@ fn dismiss(start_menu: &StartMenu) {
 /// Dismisses the menu when another window takes the foreground (Alt+Tab, a click elsewhere, a
 /// launched app). Launching already moves the menu to `Clearing`, so `dismiss` ignores it then.
 fn dismiss_on_deactivation(start_menu: &StartMenu) {
-    let is_open: bool =
-        CONTROLLER.with(|cell| matches!(cell.borrow().phase, Phase::Materializing { .. } | Phase::Open));
+    let is_open: bool = CONTROLLER.with(|cell| {
+        matches!(cell.borrow().phase, Phase::AwaitingSnapshot { .. } | Phase::Materializing { .. } | Phase::Open)
+    });
     if !is_open {
         return;
     }
@@ -532,6 +575,18 @@ fn tick_animation(start_menu: &StartMenu) {
     CONTROLLER.with(|cell| {
         let mut controller = cell.borrow_mut();
         match controller.phase {
+            Phase::AwaitingSnapshot { started_at } => {
+                if take_snapshot(&mut controller) {
+                    controller.phase = Phase::Materializing { started_at: Instant::now() };
+                } else if started_at.elapsed() >= SNAPSHOT_WAIT {
+                    eprintln!(
+                        "the desktop snapshot took over {} ms; opening as Plain Glass",
+                        SNAPSHOT_WAIT.as_millis()
+                    );
+                    controller.glass_state.borrow_mut().plain = true;
+                    controller.phase = Phase::Materializing { started_at: Instant::now() };
+                }
+            }
             Phase::Materializing { started_at } => {
                 let raw_t: f32 =
                     (started_at.elapsed().as_secs_f32() / MATERIALIZE_DURATION.as_secs_f32()).clamp(0.0, 1.0);

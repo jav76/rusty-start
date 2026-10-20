@@ -33,6 +33,9 @@ attributes without the backend's attributes hook.
   replaces this window model; all of it lives in `backdrop/linux.rs`.
 - Windows after the first cannot receive an activation token, so focus on later opens follows the
   compositor's focus-stealing policy (a KWin window rule installed by `rusty-start setup`).
+- Slint creates the session's first window at startup, before the first open. Toggling Slint's
+  fullscreen property on that live window reaches the compositor as `unset_fullscreen`, so the
+  backend asks winit directly when a window exists and uses the property only after a hide.
 - The fullscreen window can appear in the taskbar and Alt+Tab while open unless the same KWin rule
   hides it.
 
