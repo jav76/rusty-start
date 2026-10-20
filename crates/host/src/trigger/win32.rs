@@ -25,11 +25,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, HC_ACTION, HHOOK,
     KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLKHF_UP, MSG, PostMessageW, PostThreadMessageW, RegisterClassExW,
     RegisterWindowMessageW, SetWindowsHookExW, UnhookWindowsHookEx, UnregisterClassW, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSEXW,
+    WINDOW_STYLE, WM_DISPLAYCHANGE, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SETTINGCHANGE, WM_SYSKEYDOWN,
+    WM_SYSKEYUP, WNDCLASSEXW,
 };
 use windows::core::{HSTRING, PCWSTR};
 
 use crate::config::Config;
+use crate::taskbar::TaskbarHookGuard;
 
 /// Identifies the fallback development hotkey, Ctrl+Alt+Space.
 const DEV_HOTKEY_ID: i32 = 1;
@@ -155,7 +157,7 @@ pub fn install(on_toggle: impl Fn() + Send + 'static) -> Result<TriggerGuard> {
 }
 
 fn run_trigger_thread(on_toggle: impl Fn(), ready: mpsc::Sender<Result<u32>>) {
-    let window: TriggerWindow = match TriggerWindow::create() {
+    let mut window: TriggerWindow = match TriggerWindow::create() {
         Ok(window) => window,
         Err(error) => {
             let _ = ready.send(Err(error));
@@ -169,10 +171,10 @@ fn run_trigger_thread(on_toggle: impl Fn(), ready: mpsc::Sender<Result<u32>>) {
     let thread_id: u32 = unsafe { GetCurrentThreadId() };
     let _ = ready.send(Ok(thread_id));
 
-    run_message_loop(&window, on_toggle);
+    run_message_loop(&mut window, on_toggle);
 }
 
-fn run_message_loop(window: &TriggerWindow, on_toggle: impl Fn()) {
+fn run_message_loop(window: &mut TriggerWindow, on_toggle: impl Fn()) {
     let mut message = MSG::default();
 
     loop {
@@ -190,17 +192,30 @@ fn run_message_loop(window: &TriggerWindow, on_toggle: impl Fn()) {
             continue;
         }
 
+        if window.taskbar_created_msg != 0 && message.message == window.taskbar_created_msg {
+            // Explorer restarted: re-install the taskbar hook on the new taskbar thread.
+            window.reinstall_taskbar_hook();
+            continue;
+        }
+
+        if message.message == WM_DISPLAYCHANGE || message.message == WM_SETTINGCHANGE {
+            // Screen resolution or theme changed: update Start button bounding rects.
+            window.update_taskbar_geometry();
+        }
+
         // SAFETY: `message` was filled in by the GetMessageW call above.
         unsafe { DispatchMessageW(&message) };
     }
 }
 
-/// Hidden window that owns the hotkey and optional `WH_KEYBOARD_LL` Windows-key hook. Must stay on
-/// the thread that created it.
+/// Hidden window that owns the hotkey, optional `WH_KEYBOARD_LL` Windows-key hook, and the Explorer
+/// taskbar hook. Must stay on the thread that created it.
 struct TriggerWindow {
     hwnd: HWND,
     toggle_message: u32,
+    taskbar_created_msg: u32,
     keyboard_hook: Option<HHOOK>,
+    taskbar_hook: Option<TaskbarHookGuard>,
     // Declared last so the class is unregistered only after Drop has destroyed the window.
     _class: WindowClass,
 }
@@ -208,6 +223,7 @@ struct TriggerWindow {
 impl TriggerWindow {
     fn create() -> Result<Self> {
         let toggle_message: u32 = register_toggle_message()?;
+        let taskbar_created_msg: u32 = register_taskbar_created_message();
         let class: WindowClass = WindowClass::register(MESSAGE_WINDOW_CLASS)?;
         let hwnd: HWND = create_hidden_window(&class)?;
 
@@ -215,7 +231,8 @@ impl TriggerWindow {
             cell.set(HookState { hwnd, toggle_message, chord: WinKeyChord::new() });
         });
 
-        let keyboard_hook: Option<HHOOK> = if Config::load().use_win_key {
+        let config = Config::load();
+        let keyboard_hook: Option<HHOOK> = if config.use_win_key {
             // SAFETY: `keyboard_hook_proc` is a valid `WH_KEYBOARD_LL` procedure and this thread
             // pumps messages in `run_message_loop` until `TriggerWindow` drops.
             match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) } {
@@ -229,7 +246,26 @@ impl TriggerWindow {
             None
         };
 
-        let window = Self { hwnd, toggle_message, keyboard_hook, _class: class };
+        let taskbar_hook: Option<TaskbarHookGuard> = if config.use_taskbar_hook {
+            match crate::taskbar::install_taskbar_hook(hwnd, toggle_message) {
+                Ok(guard) => Some(guard),
+                Err(error) => {
+                    eprintln!("failed to install Explorer taskbar hook: {error}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let window = Self {
+            hwnd,
+            toggle_message,
+            taskbar_created_msg,
+            keyboard_hook,
+            taskbar_hook,
+            _class: class,
+        };
 
         // SAFETY: `window.hwnd` is a live window owned by this thread.
         let hotkey = unsafe {
@@ -249,6 +285,27 @@ impl TriggerWindow {
         Ok(window)
     }
 
+    fn reinstall_taskbar_hook(&mut self) {
+        if Config::load().use_taskbar_hook {
+            match crate::taskbar::install_taskbar_hook(self.hwnd, self.toggle_message) {
+                Ok(guard) => {
+                    self.taskbar_hook = Some(guard);
+                }
+                Err(error) => {
+                    eprintln!("failed to re-install Explorer taskbar hook: {error}");
+                }
+            }
+        }
+    }
+
+    fn update_taskbar_geometry(&self) {
+        if let Some(ref hook) = self.taskbar_hook
+            && let Ok(geom) = crate::taskbar::detect_taskbar_geometry()
+        {
+            hook.update_geometry(&geom);
+        }
+    }
+
     fn is_toggle_request(&self, message: &MSG) -> bool {
         let is_dev_hotkey: bool = message.message == WM_HOTKEY && message.wParam.0 == DEV_HOTKEY_ID as usize;
 
@@ -258,6 +315,9 @@ impl TriggerWindow {
 
 impl Drop for TriggerWindow {
     fn drop(&mut self) {
+        // Drop taskbar hook first so it unhooks and unmaps before the trigger window is destroyed.
+        self.taskbar_hook.take();
+
         // SAFETY: Drop runs on the creating thread because TriggerWindow never leaves it.
         // Failures are ignored: the hook or hotkey may never have been registered.
         unsafe {
@@ -398,6 +458,12 @@ fn register_toggle_message() -> Result<u32> {
     }
 
     Ok(message_id)
+}
+
+fn register_taskbar_created_message() -> u32 {
+    let name: HSTRING = HSTRING::from("TaskbarCreated");
+    // SAFETY: RegisterWindowMessageW takes a valid null-terminated wide string.
+    unsafe { RegisterWindowMessageW(PCWSTR(name.as_ptr())) }
 }
 
 /// Stateless window procedure. Trigger messages are handled in `run_message_loop`.

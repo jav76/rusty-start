@@ -10,13 +10,21 @@ use std::ptr;
 use std::slice;
 
 use anyhow::{Context, Result, bail};
-use windows::Win32::Foundation::{POINT, RECT};
+use slint::winit_030::winit::platform::windows::{CornerPreference, WindowAttributesExtWindows};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
+use windows::Win32::Graphics::Dwm::{
+    DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_TRANSITIONS_FORCEDISABLED, DwmSetWindowAttribute,
+};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC,
     DeleteObject, GetDC, GetMonitorInfoW, HBITMAP, HDC, HGDIOBJ, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO,
     MonitorFromPoint, ReleaseDC, SRCCOPY, SelectObject,
 };
-use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DestroyWindow, EnumThreadWindows, GetCursorPos, GetWindowTextW, WS_EX_TOOLWINDOW, WS_POPUP,
+};
+use windows::core::{BOOL, PCWSTR, w};
 
 use super::{MonitorRect, MonitorSnapshot};
 
@@ -31,10 +39,8 @@ impl Capturer {
     pub fn capture_active_monitor(&mut self) -> Result<MonitorSnapshot> {
         let rect: MonitorRect = active_monitor_rect()?;
 
-        let needs_recreate: bool = self
-            .surface
-            .as_ref()
-            .is_none_or(|surface| surface.width != rect.width || surface.height != rect.height);
+        let needs_recreate: bool =
+            self.surface.as_ref().is_none_or(|surface| surface.width != rect.width || surface.height != rect.height);
 
         if needs_recreate {
             self.surface = Some(DibSurface::create(rect.width, rect.height)?);
@@ -73,7 +79,7 @@ impl Capturer {
     }
 }
 
-fn active_monitor_rect() -> Result<MonitorRect> {
+pub fn active_monitor_rect() -> Result<MonitorRect> {
     let mut cursor = POINT::default();
     // SAFETY: `cursor` is a valid writable `POINT`. If `GetCursorPos` fails (for example on a locked
     // desktop), `(0, 0)` still resolves to the primary monitor via `MONITOR_DEFAULTTONEAREST`.
@@ -97,6 +103,126 @@ fn active_monitor_rect() -> Result<MonitorRect> {
     }
 
     Ok(MonitorRect { x: rc.left, y: rc.top, width, height })
+}
+
+/// Hidden top-level window that owns the overlay.
+///
+/// winit rewrites the overlay's styles every time it is shown or hidden, dropping any
+/// `WS_EX_TOOLWINDOW` set afterwards, so an unowned overlay briefly gets a taskbar button on each
+/// toggle and the centered taskbar icons shift. Owned windows never get a taskbar button, whatever
+/// their styles.
+pub struct OverlayOwner {
+    hwnd: HWND,
+}
+
+impl Drop for OverlayOwner {
+    fn drop(&mut self) {
+        // SAFETY: `hwnd` was created on this thread by `install_backend` and is destroyed once.
+        let _ = unsafe { DestroyWindow(self.hwnd) };
+    }
+}
+
+/// Selects the winit backend with the overlay created as an owned, taskbar-less window. Must run
+/// on the UI thread before the first Slint component is created, and the returned owner must
+/// outlive the event loop.
+pub fn install_backend() -> Result<OverlayOwner> {
+    // SAFETY: "STATIC" is a system window class, and the window is never shown.
+    let hwnd: HWND = unsafe {
+        CreateWindowExW(WS_EX_TOOLWINDOW, w!("STATIC"), PCWSTR::null(), WS_POPUP, 0, 0, 0, 0, None, None, None, None)
+    }
+    .context("failed to create the overlay owner window")?;
+    let owner = OverlayOwner { hwnd };
+    let owner_handle = hwnd.0 as isize;
+
+    slint::BackendSelector::new()
+        .with_winit_window_attributes_hook(move |attributes| {
+            attributes
+                .with_owner_window(owner_handle)
+                .with_skip_taskbar(true)
+                .with_corner_preference(CornerPreference::DoNotRound)
+        })
+        .select()
+        .context("failed to select the winit backend")?;
+
+    Ok(owner)
+}
+
+/// Turns off DWM open/close transitions and the Windows 11 accent border on the overlay. These
+/// attributes survive winit's style rewrites, so this never changes the window frame.
+pub fn configure_overlay_window() {
+    let Some(hwnd) = find_overlay_hwnd_on_current_thread() else {
+        return;
+    };
+
+    let disable_transitions = BOOL::from(true);
+    let border_color: u32 = DWMWA_COLOR_NONE;
+
+    // SAFETY: `hwnd` belongs to the calling UI thread, and each attribute pointer/size pair matches
+    // the documented `DWMWINDOWATTRIBUTE` payload layout.
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED,
+            (&raw const disable_transitions).cast::<c_void>(),
+            size_of::<BOOL>() as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            (&raw const border_color).cast::<c_void>(),
+            size_of::<u32>() as u32,
+        );
+    }
+}
+
+fn find_overlay_hwnd_on_current_thread() -> Option<HWND> {
+    let mut found = HWND::default();
+    // SAFETY: `GetCurrentThreadId` has no preconditions, and `&raw mut found` remains valid for the
+    // synchronous duration of `EnumThreadWindows`.
+    unsafe {
+        let thread_id: u32 = GetCurrentThreadId();
+        let _ = EnumThreadWindows(thread_id, Some(enum_thread_window_proc), LPARAM((&raw mut found) as isize));
+    }
+
+    (!found.is_invalid()).then_some(found)
+}
+
+unsafe extern "system" fn enum_thread_window_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let mut title_buf = [0u16; 32];
+    // SAFETY: `title_buf` is a valid stack buffer and `hwnd` is supplied by `EnumThreadWindows`.
+    let len: i32 = unsafe { GetWindowTextW(hwnd, &mut title_buf) };
+    if len <= 0 {
+        return BOOL::from(true);
+    }
+
+    let title: &[u16] = &title_buf[..(len as usize).min(title_buf.len())];
+    const EXPECTED: &[u16] = &[
+        b'R' as u16,
+        b'u' as u16,
+        b's' as u16,
+        b't' as u16,
+        b'y' as u16,
+        b' ' as u16,
+        b'S' as u16,
+        b't' as u16,
+        b'a' as u16,
+        b'r' as u16,
+        b't' as u16,
+    ];
+
+    if title == EXPECTED {
+        let out_ptr = lparam.0 as *mut HWND;
+        if !out_ptr.is_null() {
+            // SAFETY: `out_ptr` points to the stack-allocated `found` variable in
+            // `find_overlay_hwnd_on_current_thread`.
+            unsafe {
+                *out_ptr = hwnd;
+            }
+        }
+        return BOOL::from(false);
+    }
+
+    BOOL::from(true)
 }
 
 struct ScreenDc {

@@ -4,10 +4,10 @@ A performance-focused replacement for the Windows 11 Start menu, written in Rust
 
 ## Status
 
-Milestone 2 of 3. The host process runs resident with its menu window hidden and toggles it when you
-tap the Windows key (or press the Ctrl+Alt+Space fallback hotkey). It lists installed apps from the
-shell's Applications folder, searches them as you type and launches the selected one. The explorer
-taskbar Start-button hook is not yet implemented.
+Milestone 3 of 3 complete. The host process runs resident with its menu window hidden and toggles it
+when you click the Windows 11 Taskbar Start button (intercepted in-process via `rusty_start_hook.dll`),
+tap the Windows key, or press the Ctrl+Alt+Space fallback hotkey. It lists installed apps from the
+shell's Applications folder, searches them as you type and launches the selected one.
 
 ## Requirements
 
@@ -17,19 +17,21 @@ taskbar Start-button hook is not yet implemented.
 ## Building and running
 
 ```
+cargo build --workspace
 cargo run -p rusty-start-host
 ```
 
-Press the Windows key (or Ctrl+Alt+Space) to open or close the menu. System shortcuts such as
-`Win+R`, `Win+E`, and `Win+Shift+S` pass through normally. When opened, the active monitor smoothly
-fogs over while the `640x720` Liquid-Glass menu card condenses into place (anchored to the
+Click the Windows 11 Taskbar Start button, tap the Windows key, or press Ctrl+Alt+Space to open or
+close the menu. System shortcuts such as `Win+R`, `Win+E`, and `Win+Shift+S` pass through normally,
+and right-clicking the Start button (Win+X menu) remains fully functional. When opened, the active monitor
+smoothly fogs over while the `640x720` Liquid-Glass menu card condenses into place (anchored to the
 middle-left of the screen by default). Type to search, use Up and Down to move the selection, and
 press Enter or click an app to launch it. Press Escape or click the fogged backdrop outside the card
 to dismiss the menu. Click the anchor pill in the top-right corner of the card (or edit
 `%APPDATA%\RustyStart\config.toml` on Windows / `$XDG_CONFIG_HOME/rusty-start/config.toml` on Linux)
 to switch between `middle-left`, `center`, `bottom-left` and `bottom-center` positioning, or set
-`use_win_key = false` to disable the Windows-key hook. Debug builds show a console window for
-diagnostic output; release builds do not.
+`use_win_key = false` or `use_taskbar_hook = false` to disable specific triggers. Debug builds show
+a console window for diagnostic output; release builds do not.
 
 If another application already owns Ctrl+Alt+Space, the host logs a warning and keeps running. The
 menu can still be toggled by posting the `RustyStart.ToggleMenu` message to the
@@ -44,7 +46,8 @@ a Windows machine. Windows integration can only be tested on Windows.
 | Path              | Purpose                                                                                      |
 | ----------------- | -------------------------------------------------------------------------------------------- |
 | `crates/host`     | Resident process: Liquid-Glass GPU shaders, desktop capture, Slint UI, triggers, app search  |
-| `crates/protocol` | Window class and message names shared with the future explorer hook                          |
+| `crates/hook`     | In-process Explorer hook DLL: Start button click suppression and IPC trigger dispatch        |
+| `crates/protocol` | Window class, message names, and shared memory geometry shared between host and hook        |
 | `GLOSSARY.md`     | Domain terminology for the Fog Veil, Liquid-Glass Card, Optical Condense and Card Anchor     |
 | `docs/adr`        | Architecture Decision Records                                                                |
 

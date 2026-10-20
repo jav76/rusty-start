@@ -13,11 +13,14 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 
 use anyhow::{Result, bail};
-use glow::{Context, Framebuffer, HasContext, NativeFramebuffer, PixelUnpackData, Program, Texture, UniformLocation, VertexArray};
+use glow::{
+    Context, Framebuffer, HasContext, NativeFramebuffer, PixelUnpackData, Program, Texture, UniformLocation,
+    VertexArray,
+};
 use slint::{ComponentHandle, GraphicsAPI, RenderingState};
 
 use crate::StartMenu;
-use crate::backdrop::MonitorSnapshot;
+use crate::backdrop::{self, MonitorRect, MonitorSnapshot};
 use crate::config::{CARD_HEIGHT, CARD_WIDTH, Config};
 
 /// Shared parameters updated by `menu.rs` on the UI thread and consumed by the OpenGL underlay
@@ -25,34 +28,42 @@ use crate::config::{CARD_HEIGHT, CARD_WIDTH, Config};
 pub struct GlassState {
     pub pending_snapshot: Option<MonitorSnapshot>,
     pub progress: f32,
+    pub zero_frame_presented: bool,
+    pub monitor_rect: MonitorRect,
     pub card_rect_px: [f32; 4],
     pub viewport_px: [f32; 2],
     pub scale_factor: f32,
+    pub config: Config,
 }
 
 impl Default for GlassState {
     fn default() -> Self {
         Self {
             pending_snapshot: None,
-            progress: 1.0,
+            progress: 0.0,
+            zero_frame_presented: false,
+            monitor_rect: MonitorRect { x: 0, y: 0, width: 1440, height: 900 },
             card_rect_px: [48.0, 90.0, CARD_WIDTH, CARD_HEIGHT],
             viewport_px: [1440.0, 900.0],
             scale_factor: 1.0,
+            config: Config::default(),
         }
     }
 }
 
 impl GlassState {
-    /// Updates the physical viewport and card bounds from the current monitor size, DPI scale, and
-    /// active `CardAnchor`.
-    pub fn update_geometry(&mut self, monitor_width_px: u32, monitor_height_px: u32, scale_factor: f32, config: Config) {
+    /// Updates the physical viewport and card bounds from the current monitor bounds, DPI scale,
+    /// and active `CardAnchor`.
+    pub fn update_geometry(&mut self, rect: MonitorRect, scale_factor: f32, config: Config) {
         let scale: f32 = scale_factor.max(0.5);
-        let logical_w: f32 = monitor_width_px as f32 / scale;
-        let logical_h: f32 = monitor_height_px as f32 / scale;
+        let logical_w: f32 = rect.width as f32 / scale;
+        let logical_h: f32 = rect.height as f32 / scale;
         let (card_x, card_y) = config.card_anchor.card_origin(logical_w, logical_h, config.edge_margin);
 
+        self.monitor_rect = rect;
         self.scale_factor = scale;
-        self.viewport_px = [monitor_width_px as f32, monitor_height_px as f32];
+        self.config = config;
+        self.viewport_px = [rect.width as f32, rect.height as f32];
         self.card_rect_px = compute_card_rect_px(card_x, card_y, scale);
     }
 }
@@ -77,6 +88,7 @@ pub fn install_rendering_notifier(start_menu: &StartMenu, state: Rc<RefCell<Glas
     let result = start_menu.window().set_rendering_notifier(move |rendering_state, graphics_api| {
         match rendering_state {
             RenderingState::RenderingSetup => {
+                backdrop::configure_overlay_window();
                 if let GraphicsAPI::NativeOpenGL { get_proc_address } = graphics_api {
                     // SAFETY: `get_proc_address` queries live OpenGL entry points for the current context.
                     let gl = unsafe { Context::from_loader_function_cstr(|name| get_proc_address(name)) };
@@ -88,19 +100,17 @@ pub fn install_rendering_notifier(start_menu: &StartMenu, state: Rc<RefCell<Glas
             }
             RenderingState::BeforeRendering => {
                 if let Some(active_renderer) = renderer.as_mut() {
+                    let mut borrowed = state.borrow_mut();
                     if let Some(menu) = weak_menu.upgrade() {
-                        let size = menu.window().size();
                         let scale = menu.window().scale_factor();
-                        let mut borrowed = state.borrow_mut();
-                        if size.width > 0 && size.height > 0 {
-                            borrowed.viewport_px = [size.width as f32, size.height as f32];
-                        }
-                        if scale > 0.0 {
-                            borrowed.scale_factor = scale;
+                        if scale > 0.0 && (scale - borrowed.scale_factor).abs() > 0.001 {
+                            let rect = borrowed.monitor_rect;
+                            let config = borrowed.config;
+                            borrowed.update_geometry(rect, scale, config);
                         }
                     }
 
-                    active_renderer.render_frame(&mut state.borrow_mut());
+                    active_renderer.render_frame(&mut borrowed);
                 }
             }
             RenderingState::AfterRendering => {}
@@ -125,7 +135,8 @@ struct BlurPassUniforms {
 }
 
 struct CompositeUniforms {
-    desktop: Option<UniformLocation>,
+    sharp: Option<UniformLocation>,
+    blur_mild: Option<UniformLocation>,
     blur_fog: Option<UniformLocation>,
     blur_deep: Option<UniformLocation>,
     resolution: Option<UniformLocation>,
@@ -167,11 +178,8 @@ struct GlassRenderer {
 
 impl GlassRenderer {
     fn new(gl: Context) -> Result<Self> {
-        let header: &str = if gl.version().is_embedded {
-            "#version 300 es\nprecision highp float;\n"
-        } else {
-            "#version 330 core\n"
-        };
+        let header: &str =
+            if gl.version().is_embedded { "#version 300 es\nprecision highp float;\n" } else { "#version 330 core\n" };
 
         let vert_src = format!("{header}{FULLSCREEN_VERT_BODY}");
         let down_src = format!("{header}{DOWNSAMPLE_FRAG_BODY}");
@@ -201,7 +209,8 @@ impl GlassRenderer {
             };
 
             let composite_uniforms = CompositeUniforms {
-                desktop: gl.get_uniform_location(composite_prog, "u_desktop"),
+                sharp: gl.get_uniform_location(composite_prog, "u_sharp"),
+                blur_mild: gl.get_uniform_location(composite_prog, "u_blur_mild"),
                 blur_fog: gl.get_uniform_location(composite_prog, "u_blur_fog"),
                 blur_deep: gl.get_uniform_location(composite_prog, "u_blur_deep"),
                 resolution: gl.get_uniform_location(composite_prog, "u_resolution"),
@@ -251,9 +260,15 @@ impl GlassRenderer {
 
             let gl = &self.gl;
 
-            if self.has_desktop_tex
+            if state.progress <= 0.0001 {
+                // FemtoVG already cleared `prev_fbo` to `rgba(0, 0, 0, 0)` before invoking
+                // `BeforeRendering`, so leaving the backbuffer untouched presents a 100%
+                // transparent frame over the live desktop.
+                state.zero_frame_presented = true;
+            } else if self.has_desktop_tex
                 && let Some(pyramid) = &self.pyramid
             {
+                state.zero_frame_presented = false;
                 let vp_w: i32 = (state.viewport_px[0] as i32).max(1);
                 let vp_h: i32 = (state.viewport_px[1] as i32).max(1);
 
@@ -262,16 +277,20 @@ impl GlassRenderer {
                 gl.use_program(Some(self.composite_prog));
 
                 gl.active_texture(glow::TEXTURE0);
-                gl.bind_texture(glow::TEXTURE_2D, Some(self.desktop_tex));
-                gl.uniform_1_i32(self.composite_uniforms.desktop.as_ref(), 0);
+                gl.bind_texture(glow::TEXTURE_2D, Some(pyramid.up_half.tex));
+                gl.uniform_1_i32(self.composite_uniforms.blur_fog.as_ref(), 0);
 
                 gl.active_texture(glow::TEXTURE1);
-                gl.bind_texture(glow::TEXTURE_2D, Some(pyramid.up_half.tex));
-                gl.uniform_1_i32(self.composite_uniforms.blur_fog.as_ref(), 1);
+                gl.bind_texture(glow::TEXTURE_2D, Some(pyramid.up_quarter.tex));
+                gl.uniform_1_i32(self.composite_uniforms.blur_deep.as_ref(), 1);
 
                 gl.active_texture(glow::TEXTURE2);
-                gl.bind_texture(glow::TEXTURE_2D, Some(pyramid.up_quarter.tex));
-                gl.uniform_1_i32(self.composite_uniforms.blur_deep.as_ref(), 2);
+                gl.bind_texture(glow::TEXTURE_2D, Some(self.desktop_tex));
+                gl.uniform_1_i32(self.composite_uniforms.sharp.as_ref(), 2);
+
+                gl.active_texture(glow::TEXTURE3);
+                gl.bind_texture(glow::TEXTURE_2D, Some(pyramid.down_half.tex));
+                gl.uniform_1_i32(self.composite_uniforms.blur_mild.as_ref(), 3);
 
                 gl.uniform_2_f32(self.composite_uniforms.resolution.as_ref(), vp_w as f32, vp_h as f32);
                 gl.uniform_4_f32(
@@ -288,6 +307,8 @@ impl GlassRenderer {
             }
 
             // Restore state for FemtoVG.
+            gl.active_texture(glow::TEXTURE3);
+            gl.bind_texture(glow::TEXTURE_2D, None);
             gl.active_texture(glow::TEXTURE2);
             gl.bind_texture(glow::TEXTURE_2D, None);
             gl.active_texture(glow::TEXTURE1);
@@ -322,10 +343,8 @@ impl GlassRenderer {
             return;
         }
 
-        let needs_pyramid: bool = self
-            .pyramid
-            .as_ref()
-            .is_none_or(|p| p.source_width != width || p.source_height != height);
+        let needs_pyramid: bool =
+            self.pyramid.as_ref().is_none_or(|p| p.source_width != width || p.source_height != height);
 
         if needs_pyramid {
             if let Some(old) = self.pyramid.take() {
@@ -450,7 +469,15 @@ impl BlurPyramid {
         let up_quarter = RenderTarget::create(gl, w4, h4)?;
         let up_half = RenderTarget::create(gl, w2, h2)?;
 
-        Ok(Self { source_width: width, source_height: height, down_half, down_quarter, down_eighth, up_quarter, up_half })
+        Ok(Self {
+            source_width: width,
+            source_height: height,
+            down_half,
+            down_quarter,
+            down_eighth,
+            up_quarter,
+            up_half,
+        })
     }
 
     fn destroy(self, gl: &Context) {
@@ -628,7 +655,8 @@ const LIQUID_GLASS_FRAG_BODY: &str = r#"
 in vec2 v_uv;
 out vec4 frag_color;
 
-uniform sampler2D u_desktop;
+uniform sampler2D u_sharp;
+uniform sampler2D u_blur_mild;
 uniform sampler2D u_blur_fog;
 uniform sampler2D u_blur_deep;
 uniform vec2 u_resolution;
@@ -660,21 +688,27 @@ void main() {
     float t = clamp(u_progress, 0.0, 1.0);
     float ease = 1.0 - pow(1.0 - t, 3.0);
 
-    // 1. Progressive outer screen Fog Veil (0px sharp -> Dual-Kawase blurred mist).
-    vec3 sharp_bg = texture(u_desktop, v_uv).rgb;
+    // 1. Progressive outer screen Fog Veil. The blur radius grows from the pixel-exact snapshot
+    //    through each pyramid level instead of fading a fully blurred copy over the live desktop,
+    //    which reads as a second, offset desktop appearing and disappearing.
+    vec3 sharp = texture(u_sharp, v_uv).rgb;
+    vec3 fog_mild = texture(u_blur_mild, v_uv).rgb;
     vec3 fog_mid = texture(u_blur_fog, v_uv).rgb;
     vec3 fog_deep = texture(u_blur_deep, v_uv).rgb;
 
-    float fog_stage_1 = smoothstep(0.0, 0.55, ease);
-    float fog_stage_2 = smoothstep(0.25, 1.0, ease);
-    vec3 outer_fog = mix(sharp_bg, fog_mid, fog_stage_1);
-    outer_fog = mix(outer_fog, fog_deep, fog_stage_2 * 0.72);
+    vec3 outer_fog = mix(sharp, fog_mild, smoothstep(0.0, 0.35, ease));
+    outer_fog = mix(outer_fog, fog_mid, smoothstep(0.2, 0.7, ease));
+    outer_fog = mix(outer_fog, fog_deep, smoothstep(0.5, 1.0, ease) * 0.72);
 
     // Atmospheric mist tint & gentle radial vignette on the fogged desktop.
     vec2 centered_uv = v_uv - vec2(0.5);
     float vignette = clamp(dot(centered_uv, centered_uv) * 0.65, 0.0, 0.35);
     vec3 mist_tint = vec3(0.045, 0.07, 0.125);
     outer_fog = mix(outer_fog, mist_tint, (0.34 + vignette * 0.35) * ease);
+
+    // The veil turns opaque while it still shows the unblurred snapshot, which matches the live
+    //    desktop, so the handoff between the two is invisible in both directions.
+    float veil_alpha = smoothstep(0.0, 0.1, ease);
 
     // 2. Floating 640x720 Liquid-Glass Card SDF geometry (in top-left physical coordinates).
     vec2 frag_tl = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
@@ -688,10 +722,11 @@ void main() {
     vec2 rel_p = frag_tl - card_center;
     float dist = sd_rounded_box(rel_p, half_size, corner_radius);
 
-    // Soft ambient drop shadow beneath the floating card.
+    // Soft ambient drop shadow beneath the floating card in premultiplied alpha.
     float shadow_dist = sd_rounded_box(rel_p - vec2(0.0, 14.0 * u_dpi), half_size, corner_radius);
-    float shadow_alpha = exp(-max(shadow_dist, 0.0) / (28.0 * u_dpi)) * 0.44 * ease;
-    vec3 scene_color = outer_fog * (1.0 - shadow_alpha * step(0.0, dist));
+    float shadow_only = exp(-max(shadow_dist, 0.0) / (28.0 * u_dpi)) * 0.44 * ease * step(0.0, dist);
+    vec3 premul_out = outer_fog * veil_alpha * (1.0 - shadow_only);
+    float alpha_out = veil_alpha + shadow_only * (1.0 - veil_alpha);
 
     // 3. Liquid-Glass Card optical refraction, chromatic dispersion, and specular sweep.
     if (dist < 1.5) {
@@ -756,10 +791,11 @@ void main() {
         glass_color += vec3(grain);
 
         float card_mask = smoothstep(0.75, -0.75, dist) * clamp(ease * 1.15, 0.0, 1.0);
-        scene_color = mix(scene_color, glass_color, card_mask);
+        premul_out = mix(premul_out, glass_color, card_mask);
+        alpha_out = mix(alpha_out, 1.0, card_mask);
     }
 
-    frag_color = vec4(scene_color, 1.0);
+    frag_color = vec4(premul_out, alpha_out);
 }
 "#;
 
@@ -783,5 +819,18 @@ mod tests {
 
         assert_eq!(rect, [72.0, 135.0, 960.0, 1080.0]);
     }
-}
 
+    #[test]
+    fn glass_state_starts_transparent_and_locks_viewport_to_monitor_rect() {
+        let mut state = GlassState::default();
+        assert_eq!(state.progress, 0.0);
+        assert!(!state.zero_frame_presented);
+
+        let monitor = MonitorRect { x: -1920, y: 0, width: 2560, height: 1440 };
+        state.update_geometry(monitor, 1.25, Config::default());
+
+        assert_eq!(state.monitor_rect, monitor);
+        assert_eq!(state.viewport_px, [2560.0, 1440.0]);
+        assert_eq!(state.scale_factor, 1.25);
+    }
+}

@@ -96,11 +96,17 @@ pub struct Config {
     pub card_anchor: CardAnchor,
     pub edge_margin: f32,
     pub use_win_key: bool,
+    pub use_taskbar_hook: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { card_anchor: CardAnchor::MiddleLeft, edge_margin: DEFAULT_EDGE_MARGIN, use_win_key: true }
+        Self {
+            card_anchor: CardAnchor::MiddleLeft,
+            edge_margin: DEFAULT_EDGE_MARGIN,
+            use_win_key: true,
+            use_taskbar_hook: true,
+        }
     }
 }
 
@@ -161,6 +167,11 @@ impl Config {
                     "false" | "0" | "no" => config.use_win_key = false,
                     _ => {}
                 },
+                "use_taskbar_hook" => match value.to_ascii_lowercase().as_str() {
+                    "true" | "1" | "yes" => config.use_taskbar_hook = true,
+                    "false" | "0" | "no" => config.use_taskbar_hook = false,
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -174,10 +185,12 @@ impl Config {
              # Options: \"middle-left\" (default), \"center\", \"bottom-left\", \"bottom-center\"\n\
              card_anchor = \"{}\"\n\
              edge_margin = {}\n\
-             use_win_key = {}\n",
+             use_win_key = {}\n\
+             use_taskbar_hook = {}\n",
             self.card_anchor.as_key(),
             self.edge_margin as u32,
             self.use_win_key,
+            self.use_taskbar_hook,
         )
     }
 }
@@ -203,6 +216,7 @@ mod tests {
         assert_eq!(config.card_anchor, CardAnchor::MiddleLeft);
         assert_eq!(config.edge_margin, 48.0);
         assert!(config.use_win_key);
+        assert!(config.use_taskbar_hook);
     }
 
     #[test]
@@ -225,7 +239,12 @@ mod tests {
 
     #[test]
     fn round_trips_toml_serialization() {
-        let original = Config { card_anchor: CardAnchor::BottomLeft, edge_margin: 64.0, use_win_key: false };
+        let original = Config {
+            card_anchor: CardAnchor::BottomLeft,
+            edge_margin: 64.0,
+            use_win_key: false,
+            use_taskbar_hook: false,
+        };
         let parsed = Config::parse_toml(&original.to_toml());
 
         assert_eq!(parsed, original);

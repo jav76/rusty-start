@@ -3709,10 +3709,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "rusty-start-hook"
+version = "0.1.0"
+dependencies = [
+ "rusty-start-protocol",
+ "windows",
+]
+
+[[package]]
 name = "rusty-start-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "glow",
  "rusty-start-protocol",
  "slint",
  "slint-build",
@@ -3944,6 +3953,7 @@ dependencies = [
  "const-field-offset",
  "i-slint-backend-linuxkms",
  "i-slint-backend-selector",
+ "i-slint-backend-winit",
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",

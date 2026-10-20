@@ -30,6 +30,7 @@ enum Phase {
     Materializing { started_at: Instant },
     Open,
     Dematerializing { started_at: Instant, from_progress: f32 },
+    Clearing { ticks_left: u8 },
 }
 
 struct MenuController {
@@ -43,11 +44,13 @@ struct MenuController {
 
 impl MenuController {
     fn new() -> Self {
+        let monitor_rect =
+            backdrop::active_monitor_rect().unwrap_or(MonitorRect { x: 0, y: 0, width: 1440, height: 900 });
         Self {
             config: Config::load(),
             capturer: backdrop::Capturer::default(),
             glass_state: Rc::new(RefCell::new(GlassState::default())),
-            monitor_rect: MonitorRect { x: 0, y: 0, width: 1440, height: 900 },
+            monitor_rect,
             phase: Phase::Hidden,
             timer: Timer::default(),
         }
@@ -59,8 +62,12 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
 
     CONTROLLER.with(|cell| {
         let controller = cell.borrow();
+        let rect = controller.monitor_rect;
+        start_menu.window().set_position(PhysicalPosition::new(rect.x, rect.y));
+        start_menu.window().set_size(PhysicalSize::new(rect.width, rect.height));
+        apply_layout(start_menu, rect, controller.config, &controller.glass_state);
+        set_progress(start_menu, &controller.glass_state, 0.0);
         glass::install_rendering_notifier(start_menu, Rc::clone(&controller.glass_state));
-        apply_layout(start_menu, controller.monitor_rect, controller.config, &controller.glass_state);
     });
 
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
@@ -119,7 +126,8 @@ fn set_apps(start_menu: &StartMenu, apps: Vec<App>) {
 pub fn toggle(start_menu: &StartMenu) {
     let should_dismiss: bool = CONTROLLER.with(|cell| {
         let controller = cell.borrow();
-        start_menu.window().is_visible() && !matches!(controller.phase, Phase::Dematerializing { .. } | Phase::Hidden)
+        start_menu.window().is_visible()
+            && !matches!(controller.phase, Phase::Dematerializing { .. } | Phase::Clearing { .. } | Phase::Hidden)
     });
 
     if should_dismiss {
@@ -147,6 +155,7 @@ fn show(start_menu: &StartMenu) {
         }
 
         let rect: MonitorRect = controller.monitor_rect;
+        backdrop::configure_overlay_window();
         start_menu.window().set_position(PhysicalPosition::new(rect.x, rect.y));
         start_menu.window().set_size(PhysicalSize::new(rect.width, rect.height));
         apply_layout(start_menu, rect, controller.config, &controller.glass_state);
@@ -171,7 +180,9 @@ fn show(start_menu: &StartMenu) {
 fn dismiss(start_menu: &StartMenu) {
     let should_start: bool = CONTROLLER.with(|cell| {
         let mut controller = cell.borrow_mut();
-        if !start_menu.window().is_visible() || matches!(controller.phase, Phase::Hidden) {
+        if !start_menu.window().is_visible()
+            || matches!(controller.phase, Phase::Dematerializing { .. } | Phase::Clearing { .. } | Phase::Hidden)
+        {
             return false;
         }
 
@@ -185,14 +196,15 @@ fn dismiss(start_menu: &StartMenu) {
     }
 }
 
-/// Hides the window immediately without destroying it, so the next show reuses the native window,
-/// OpenGL context and Dual-Kawase blur FBOs. The search is reset first so the next open never
-/// flashes stale results.
+/// Hides the window without destroying it, so the next show reuses the native window, OpenGL
+/// context and Dual-Kawase blur FBOs. The search is reset and progress is zeroed so the next open
+/// never flashes stale results.
 fn hide(start_menu: &StartMenu) {
     CONTROLLER.with(|cell| {
         let mut controller = cell.borrow_mut();
         controller.timer.stop();
         controller.phase = Phase::Hidden;
+        set_progress(start_menu, &controller.glass_state, 0.0);
     });
 
     start_menu.invoke_reset_search();
@@ -209,8 +221,15 @@ fn launch(start_menu: &StartMenu, row: i32) {
 
     if let Some(app) = AppList::with(start_menu, |app_list| app_list.app(row)).flatten() {
         apps::launch(&app);
-        // Hide immediately on app launch so focus transfers to the target app with zero delay.
-        hide(start_menu);
+        // Clear the swapchain to 0.0 opacity before hiding so the next open never flashes the
+        // previous frame.
+        CONTROLLER.with(|cell| {
+            let mut controller = cell.borrow_mut();
+            set_progress(start_menu, &controller.glass_state, 0.0);
+            controller.phase = Phase::Clearing { ticks_left: 2 };
+        });
+        start_menu.window().request_redraw();
+        start_animation_timer(start_menu);
     }
 }
 
@@ -240,13 +259,17 @@ fn apply_layout(start_menu: &StartMenu, rect: MonitorRect, config: Config, glass
     start_menu.set_card_y(card_y);
     start_menu.set_anchor_label(config.card_anchor.label().into());
 
-    glass_state.borrow_mut().update_geometry(rect.width, rect.height, scale, config);
+    glass_state.borrow_mut().update_geometry(rect, scale, config);
 }
 
 fn set_progress(start_menu: &StartMenu, glass_state: &Rc<RefCell<GlassState>>, progress: f32) {
     let clamped: f32 = progress.clamp(0.0, 1.0);
     start_menu.set_progress(clamped);
-    glass_state.borrow_mut().progress = clamped;
+    let mut borrowed = glass_state.borrow_mut();
+    borrowed.progress = clamped;
+    if clamped > 0.0001 {
+        borrowed.zero_frame_presented = false;
+    }
 }
 
 fn start_animation_timer(start_menu: &StartMenu) {
@@ -289,8 +312,21 @@ fn tick_animation(start_menu: &StartMenu) {
                 start_menu.window().request_redraw();
 
                 if raw_t >= 1.0 {
+                    if controller.glass_state.borrow().zero_frame_presented {
+                        controller.timer.stop();
+                        should_hide = true;
+                    } else {
+                        controller.phase = Phase::Clearing { ticks_left: 2 };
+                    }
+                }
+            }
+            Phase::Clearing { ticks_left } => {
+                if controller.glass_state.borrow().zero_frame_presented || ticks_left <= 1 {
                     controller.timer.stop();
                     should_hide = true;
+                } else {
+                    controller.phase = Phase::Clearing { ticks_left: ticks_left - 1 };
+                    start_menu.window().request_redraw();
                 }
             }
             Phase::Open | Phase::Hidden => {

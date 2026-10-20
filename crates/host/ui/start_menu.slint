@@ -9,7 +9,9 @@ export component StartMenu inherits Window {
     in property <length> monitor-height: 900px;
     in property <length> card-x: 48px;
     in property <length> card-y: 90px;
-    in property <float> progress: 1.0;
+    in property <float> progress: 0.0;
+    // Same cubic-out curve the glass shader applies, so the card content moves with the glass body.
+    property <float> ease: 1.0 - (1.0 - root.progress) * (1.0 - root.progress) * (1.0 - root.progress);
     in property <string> anchor-label: "Middle Left";
 
     callback dismiss();
@@ -98,10 +100,11 @@ export component StartMenu inherits Window {
         // refracted glass body, chromatic bevel and specular rim directly behind this rect.
         card := Rectangle {
             x: root.card-x;
-            y: root.card-y + (1.0 - root.progress) * 16px;
+            y: root.card-y + (1.0 - root.ease) * 16px;
             width: 640px;
             height: 720px;
-            opacity: clamp(root.progress * 1.15, 0.0, 1.0);
+            transform-scale: 0.92 + 0.08 * root.ease;
+            opacity: clamp(root.ease * 1.15, 0.0, 1.0);
             background: transparent;
 
             // Absorbs pointer clicks inside the card so they do not trigger `backdrop-touch`.

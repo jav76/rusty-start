@@ -10,6 +10,19 @@ use super::{MonitorRect, MonitorSnapshot};
 const PREVIEW_WIDTH: u32 = 1440;
 const PREVIEW_HEIGHT: u32 = 900;
 
+pub fn active_monitor_rect() -> Result<MonitorRect> {
+    Ok(MonitorRect { x: 0, y: 0, width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT })
+}
+
+/// Placeholder so the host's startup code is identical on every platform.
+pub struct OverlayOwner;
+
+pub fn install_backend() -> Result<OverlayOwner> {
+    Ok(OverlayOwner)
+}
+
+pub fn configure_overlay_window() {}
+
 #[derive(Default)]
 pub struct Capturer {
     cached: Option<MonitorSnapshot>,
@@ -70,4 +83,3 @@ impl Capturer {
         Ok(snapshot)
     }
 }
-

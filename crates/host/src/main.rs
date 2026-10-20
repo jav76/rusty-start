@@ -8,6 +8,7 @@ mod config;
 mod glass;
 mod menu;
 mod search;
+mod taskbar;
 mod trigger;
 
 use slint::ComponentHandle;
@@ -15,6 +16,7 @@ use slint::ComponentHandle;
 slint::include_modules!();
 
 fn main() -> anyhow::Result<()> {
+    let _overlay_owner: backdrop::OverlayOwner = backdrop::install_backend()?;
     let start_menu: StartMenu = StartMenu::new()?;
     menu::connect_callbacks(&start_menu);
     menu::load_apps_in_background(&start_menu)?;
