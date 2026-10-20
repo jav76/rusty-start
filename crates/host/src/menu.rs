@@ -219,10 +219,12 @@ pub fn load_apps_in_background(start_menu: &StartMenu) -> anyhow::Result<()> {
     thread::Builder::new()
         .name("rusty-start-app-index".into())
         .spawn(move || {
+            let started_at: Instant = Instant::now();
             let usage: anyhow::Result<Usage> = usage::load();
             let apps: Vec<App> = apps::load()
                 .inspect_err(|error| eprintln!("failed to load the app list: {error:#}"))
                 .unwrap_or_default();
+            eprintln!("loaded the app index ({} apps) in {} ms", apps.len(), started_at.elapsed().as_millis());
             let icon_apps: Vec<App> = apps.clone();
 
             let delivered =
@@ -264,8 +266,17 @@ fn deliver_icons(weak_menu: &slint::Weak<StartMenu>, apps: &[App]) {
         return;
     }
 
+    let started_at: Instant = Instant::now();
     let icons: Vec<(String, IconPixels)> = match apps::load_icons(&missing) {
-        Ok(icons) => icons,
+        Ok(icons) => {
+            eprintln!(
+                "rendered {} of {} app icons in {} ms",
+                icons.len(),
+                missing.len(),
+                started_at.elapsed().as_millis()
+            );
+            icons
+        }
         Err(error) => {
             eprintln!("failed to load app icons: {error:#}");
             return;

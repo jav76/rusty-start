@@ -23,6 +23,9 @@ rusty-start-protocol.workspace = true
 slint = { workspace = true, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "accessibility", "unstable-winit-030"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+png.workspace = true
+resvg.workspace = true
+rustix.workspace = true
 zbus.workspace = true
 
 [target.'cfg(windows)'.dependencies]

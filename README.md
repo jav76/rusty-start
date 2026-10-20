@@ -89,8 +89,9 @@ libfontconfig-dev` on Debian).
 `--features preview` builds the preview backend on any OS: the menu opens once at startup over a
 synthetic desktop backdrop with a fixed sample app list, so the Liquid-Glass shaders and UI can be
 iterated on without desktop integration. Linux support (KDE Plasma 6 on Wayland first) is in
-progress; until it lands, Linux builds also use the preview behavior. Windows integration can only
-be tested on Windows.
+progress: the host runs as a D-Bus service, lists apps from their `.desktop` files with theme icons
+and launches them, while the backdrop and power actions still use the preview behavior. Windows
+integration can only be tested on Windows.
 
 ## Project layout
 
