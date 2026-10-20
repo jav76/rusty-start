@@ -1,5 +1,10 @@
 # 0002: In-Process Explorer Hook DLL and Shared Memory for Taskbar Start Interception
 
+## Status
+
+Accepted, but does not work on current Windows 11 builds (checked 2026-10-20 on build 26200). See
+**Finding** below. Taskbar Start clicks are left unsupported for now.
+
 ## Context
 
 In Milestone 3 of `rusty-start`, the menu must materialize not only on keyboard triggers (Windows key, `Ctrl+Alt+Space`), but also when the user clicks the physical Windows 11 Taskbar Start button.
@@ -26,3 +31,21 @@ In Windows 11, the taskbar (`Shell_TrayWnd`) and secondary taskbars (`Shell_Seco
 6. **Unwind Safety**:
    Every entry point in `rusty_start_hook.dll` wraps execution in `std::panic::catch_unwind` to prevent Rust panics from unwinding across FFI boundaries into Explorer.
 
+## Finding (2026-10-20)
+
+On Windows 11 build 26200 the hook never sees a Start button click, so the native Start menu opens:
+
+- All taskbar windows, including the XAML `Windows.UI.Input.InputSite.WindowClass`, belong to the
+  `Shell_TrayWnd` thread the hook is installed on, and the shared memory held the correct Start
+  rectangle.
+- A diagnostic build of the hook reported every message ID it saw. Mouse moves arrived as
+  `WM_MOUSEMOVE` for the `InputSite` window, but a real left click produced no `WM_LBUTTONDOWN`,
+  `WM_LBUTTONUP` or `WM_POINTER*` message at all.
+- The XAML taskbar takes button input through its lifted-input pipeline, which does not pass through
+  `GetMessage`/`PeekMessage`. No `WH_GETMESSAGE` (or `WH_MOUSE`) hook can intercept it, wherever it is
+  injected.
+
+Options considered: a low-level mouse hook (`WH_MOUSE_LL`) in the host that swallows left clicks over
+the Start button, or patching XAML input inside explorer. The decision for now is to leave taskbar
+clicks unsupported and rely on the Windows key. A `WH_MOUSE_LL` hook in the host is the robust option
+if this is revisited; it would supersede this ADR and make the injected DLL unnecessary for clicks.

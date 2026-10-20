@@ -23,6 +23,10 @@ pub fn install_backend() -> Result<OverlayOwner> {
 
 pub fn configure_overlay_window() {}
 
+pub fn focus_overlay_window() -> bool {
+    true
+}
+
 #[derive(Default)]
 pub struct Capturer {
     cached: Option<MonitorSnapshot>,

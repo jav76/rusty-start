@@ -6,29 +6,25 @@
 
 #[cfg(windows)]
 pub mod win32 {
+    use anyhow::{Context, Result, bail};
+    use rusty_start_protocol::{HOOK_DLL_NAME, HOOK_SHARED_MEMORY_NAME, HookSharedState, Rect};
     use std::env;
     use std::path::PathBuf;
     use std::ptr;
-    use anyhow::{Context, Result, bail};
-    use rusty_start_protocol::{
-        HOOK_DLL_NAME, HOOK_SHARED_MEMORY_NAME, HookSharedState, Rect,
-    };
-    use windows::Win32::Foundation::{
-        CloseHandle, FreeLibrary, HANDLE, HMODULE, HWND, LPARAM, LRESULT, WPARAM,
-    };
+    use windows::Win32::Foundation::{CloseHandle, FreeLibrary, HANDLE, HMODULE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
     use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
     use windows::Win32::System::Memory::{
-        CreateFileMappingW, FILE_MAP_ALL_ACCESS, MapViewOfFile, MEMORY_MAPPED_VIEW_ADDRESS,
-        PAGE_READWRITE, UnmapViewOfFile,
+        CreateFileMappingW, FILE_MAP_ALL_ACCESS, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile, PAGE_READWRITE,
+        UnmapViewOfFile,
     };
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, TreeScope_Descendants, UIA_AutomationIdPropertyId,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        FindWindowExW, FindWindowW, GetWindowRect, GetWindowThreadProcessId, HHOOK,
-        SetWindowsHookExW, UnhookWindowsHookEx, WH_GETMESSAGE,
+        FindWindowExW, FindWindowW, GetWindowRect, GetWindowThreadProcessId, HHOOK, SetWindowsHookExW,
+        UnhookWindowsHookEx, WH_GETMESSAGE,
     };
     use windows::core::{BSTR, HSTRING, PCWSTR, s, w};
 
@@ -72,7 +68,7 @@ pub mod win32 {
         let child = unsafe { FindWindowExW(Some(tray_hwnd), None, w!("Start"), None) }.ok()?;
         let mut r = windows::Win32::Foundation::RECT::default();
         // SAFETY: Querying window rectangle for the legacy Start button HWND.
-        let ok = unsafe { GetWindowRect(child, &mut r) };
+        let ok = unsafe { GetWindowRect(child, &raw mut r) };
         if ok.is_ok() {
             let rect = Rect::new(r.left, r.top, r.right, r.bottom);
             if rect.is_valid() {
@@ -86,30 +82,28 @@ pub mod win32 {
     /// Discovers all taskbars on screen and queries their Start button rectangles.
     pub fn detect_taskbar_geometry() -> Result<TaskbarGeometry> {
         // SAFETY: Locating primary taskbar window by class name.
-        let primary_hwnd = unsafe { FindWindowW(w!("Shell_TrayWnd"), None) }
-            .context("failed to locate Shell_TrayWnd")?;
+        let primary_hwnd =
+            unsafe { FindWindowW(w!("Shell_TrayWnd"), None) }.context("failed to locate Shell_TrayWnd")?;
 
         let mut primary_pid = 0u32;
         // SAFETY: Obtaining thread ID and process ID of primary taskbar window.
-        let primary_tid = unsafe { GetWindowThreadProcessId(primary_hwnd, Some(&mut primary_pid)) };
+        let primary_tid = unsafe { GetWindowThreadProcessId(primary_hwnd, Some(&raw mut primary_pid)) };
         if primary_tid == 0 {
             bail!("failed to obtain thread ID for Shell_TrayWnd");
         }
 
         // Initialize COM UIA if possible for high-accuracy bounding rectangle queries.
         // SAFETY: Instantiating CUIAutomation on the calling thread.
-        let automation: Option<IUIAutomation> = unsafe {
-            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()
-        };
+        let automation: Option<IUIAutomation> =
+            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok() };
 
-        let primary_rect = query_start_button_rect(primary_hwnd, automation.as_ref())
-            .unwrap_or_else(|| {
-                // If undetectable, estimate default left-corner Start button based on taskbar rect.
-                let mut tray_r = windows::Win32::Foundation::RECT::default();
-                // SAFETY: Querying primary taskbar bounds.
-                let _ = unsafe { GetWindowRect(primary_hwnd, &mut tray_r) };
-                Rect::new(tray_r.left, tray_r.top, tray_r.left + 50, tray_r.bottom)
-            });
+        let primary_rect = query_start_button_rect(primary_hwnd, automation.as_ref()).unwrap_or_else(|| {
+            // If undetectable, estimate default left-corner Start button based on taskbar rect.
+            let mut tray_r = windows::Win32::Foundation::RECT::default();
+            // SAFETY: Querying primary taskbar bounds.
+            let _ = unsafe { GetWindowRect(primary_hwnd, &raw mut tray_r) };
+            Rect::new(tray_r.left, tray_r.top, tray_r.left + 50, tray_r.bottom)
+        });
 
         // Search for secondary taskbar window (multi-monitor setups).
         let mut secondary_rect = Rect::default();
@@ -211,7 +205,7 @@ pub mod win32 {
                 // SAFETY: Unmapping the shared memory view.
                 unsafe {
                     let _ = UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
-                        Value: self.mapped_ptr as *mut std::ffi::c_void,
+                        Value: self.mapped_ptr.cast::<std::ffi::c_void>(),
                     });
                 }
             }
@@ -247,21 +241,16 @@ pub mod win32 {
         };
 
         // SAFETY: Mapping read-write view of the shared state for initialization.
-        let view = unsafe {
-            MapViewOfFile(
-                mapping_handle,
-                FILE_MAP_ALL_ACCESS,
-                0,
-                0,
-                std::mem::size_of::<HookSharedState>(),
-            )
-        };
+        let view =
+            unsafe { MapViewOfFile(mapping_handle, FILE_MAP_ALL_ACCESS, 0, 0, std::mem::size_of::<HookSharedState>()) };
         if view.Value.is_null() {
             // SAFETY: Cleanup handle on view mapping failure.
-            unsafe { let _ = CloseHandle(mapping_handle); }
+            unsafe {
+                let _ = CloseHandle(mapping_handle);
+            }
             bail!("failed to map view of hook shared memory");
         }
-        let mapped_ptr = view.Value as *mut HookSharedState;
+        let mapped_ptr = view.Value.cast::<HookSharedState>();
 
         // Populate initial state.
         let initial_state = HookSharedState {
@@ -280,38 +269,26 @@ pub mod win32 {
         // 2. Load the hook DLL in the host process to resolve the hook procedure.
         let dll_path_wide = HSTRING::from(dll_path.as_os_str());
         // SAFETY: Loading hook DLL into host process memory space.
-        let dll_module = unsafe {
-            LoadLibraryW(PCWSTR(dll_path_wide.as_ptr()))
-        }.context("failed to load rusty_start_hook.dll into host")?;
+        let dll_module = unsafe { LoadLibraryW(PCWSTR(dll_path_wide.as_ptr())) }
+            .context("failed to load rusty_start_hook.dll into host")?;
 
         // SAFETY: Resolving exported hook procedure address by name.
-        let proc_addr = unsafe {
-            GetProcAddress(dll_module, s!("rusty_start_hook_proc"))
-        }.context("failed to find rusty_start_hook_proc in DLL")?;
+        let proc_addr = unsafe { GetProcAddress(dll_module, s!("rusty_start_hook_proc")) }
+            .context("failed to find rusty_start_hook_proc in DLL")?;
 
         // SAFETY: Converting raw function pointer to HookProc signature expected by SetWindowsHookExW.
-        let hook_proc: unsafe extern "system" fn(i32, WPARAM, LPARAM) -> LRESULT = unsafe {
-            std::mem::transmute(proc_addr)
-        };
+        let hook_proc: unsafe extern "system" fn(i32, WPARAM, LPARAM) -> LRESULT =
+            unsafe { std::mem::transmute(proc_addr) };
 
         // 3. Install the WH_GETMESSAGE hook on Explorer's taskbar thread.
         // SAFETY: Installing hook on the specific taskbar thread ID (geom.primary_tray_tid).
         // Windows injects dll_module into explorer.exe when events arrive.
         let hook_handle = unsafe {
-            SetWindowsHookExW(
-                WH_GETMESSAGE,
-                Some(hook_proc),
-                Some(dll_module.into()),
-                geom.primary_tray_tid,
-            )
-        }.context("failed to install WH_GETMESSAGE hook on Explorer taskbar thread")?;
+            SetWindowsHookExW(WH_GETMESSAGE, Some(hook_proc), Some(dll_module.into()), geom.primary_tray_tid)
+        }
+        .context("failed to install WH_GETMESSAGE hook on Explorer taskbar thread")?;
 
-        Ok(TaskbarHookGuard {
-            mapping_handle,
-            mapped_ptr,
-            hook_handle,
-            dll_module,
-        })
+        Ok(TaskbarHookGuard { mapping_handle, mapped_ptr, hook_handle, dll_module })
     }
 }
 

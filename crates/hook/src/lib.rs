@@ -13,7 +13,7 @@ mod win32 {
     use rusty_start_protocol::{HOOK_SHARED_MEMORY_NAME, HookSharedState};
     use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
     use windows::Win32::System::Memory::{FILE_MAP_READ, MapViewOfFile, OpenFileMappingW, UnmapViewOfFile};
-    use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
+    use windows::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, GetWindowThreadProcessId, PostMessageW};
     use windows::core::HSTRING;
 
     struct SharedMapping {
@@ -52,29 +52,14 @@ mod win32 {
         if guard.is_none() {
             let wide_name = HSTRING::from(HOOK_SHARED_MEMORY_NAME);
             // SAFETY: Opening read-only file mapping by name with standard Win32 flags.
-            let handle_res = unsafe {
-                OpenFileMappingW(
-                    FILE_MAP_READ.0,
-                    false,
-                    windows::core::PCWSTR(wide_name.as_ptr()),
-                )
-            };
+            let handle_res =
+                unsafe { OpenFileMappingW(FILE_MAP_READ.0, false, windows::core::PCWSTR(wide_name.as_ptr())) };
             if let Ok(handle) = handle_res {
                 // SAFETY: Mapping the read-only file view with the exact size of HookSharedState.
-                let view = unsafe {
-                    MapViewOfFile(
-                        handle,
-                        FILE_MAP_READ,
-                        0,
-                        0,
-                        std::mem::size_of::<HookSharedState>(),
-                    )
-                };
+                let view =
+                    unsafe { MapViewOfFile(handle, FILE_MAP_READ, 0, 0, std::mem::size_of::<HookSharedState>()) };
                 if !view.Value.is_null() {
-                    *guard = Some(SharedMapping {
-                        handle,
-                        ptr: view.Value as *const HookSharedState,
-                    });
+                    *guard = Some(SharedMapping { handle, ptr: view.Value as *const HookSharedState });
                 } else {
                     // SAFETY: Mapping failed; clean up the open handle.
                     unsafe {
@@ -118,14 +103,21 @@ mod win32 {
             && state.trigger_hwnd != 0
             && state.toggle_msg_id != 0
         {
+            let trigger_hwnd = HWND(state.trigger_hwnd as *mut std::ffi::c_void);
+            let mut host_pid: u32 = 0;
+            // SAFETY: `host_pid` is a valid out-parameter. A stale handle only yields a zero pid.
+            unsafe { GetWindowThreadProcessId(trigger_hwnd, Some(&raw mut host_pid)) };
+
+            // Explorer owns the foreground after a taskbar click, so it can hand that right to the
+            // host. Without it the host's `SetForegroundWindow` fails and the menu opens unfocused.
+            if host_pid != 0 {
+                // SAFETY: AllowSetForegroundWindow has no memory-safety preconditions.
+                let _ = unsafe { AllowSetForegroundWindow(host_pid) };
+            }
+
             // SAFETY: Posting the registered toggle message to the host window asynchronously.
             unsafe {
-                let _ = PostMessageW(
-                    Some(HWND(state.trigger_hwnd as *mut std::ffi::c_void)),
-                    state.toggle_msg_id,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
+                let _ = PostMessageW(Some(trigger_hwnd), state.toggle_msg_id, WPARAM(0), LPARAM(0));
             }
         }
     }
@@ -189,23 +181,11 @@ pub unsafe extern "system" fn rusty_start_hook_proc(
     }));
 
     // SAFETY: Forwarding hook message to the next hook in the chain as required by Win32 hooks.
-    unsafe {
-        windows::Win32::UI::WindowsAndMessaging::CallNextHookEx(
-            None,
-            code,
-            wparam,
-            lparam,
-        )
-    }
+    unsafe { windows::Win32::UI::WindowsAndMessaging::CallNextHookEx(None, code, wparam, lparam) }
 }
 
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
-pub extern "system" fn rusty_start_hook_proc(
-    _code: i32,
-    _wparam: usize,
-    _lparam: isize,
-) -> isize {
+pub extern "system" fn rusty_start_hook_proc(_code: i32, _wparam: usize, _lparam: isize) -> isize {
     0
 }
-

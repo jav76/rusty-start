@@ -12,7 +12,16 @@ pub const MESSAGE_WINDOW_CLASS: &str = "RustyStart.TriggerWindow";
 ///
 /// The message must be posted with `PostMessageW`, never sent with `SendMessageW`:
 /// the host reads it from its message queue rather than from a window procedure.
+///
+/// Senders that own the foreground (the explorer hook, a second host launch) must call
+/// `AllowSetForegroundWindow` with the host's process ID before posting. Without it Windows
+/// refuses the host's `SetForegroundWindow`, and the menu opens without keyboard focus. The host's
+/// process ID comes from `GetWindowThreadProcessId` on the trigger window.
 pub const TOGGLE_MESSAGE_NAME: &str = "RustyStart.ToggleMenu";
+
+/// Name of the mutex that keeps one host running per session. A launch that finds it already
+/// held toggles the running host's menu and exits.
+pub const SINGLE_INSTANCE_MUTEX_NAME: &str = "Local\\RustyStart.Host";
 
 /// Name of the named shared memory section for exchanging geometry between host and hook.
 pub const HOOK_SHARED_MEMORY_NAME: &str = "Local\\RustyStartHookShared";
@@ -97,4 +106,3 @@ mod tests {
         assert_eq!(std::mem::align_of::<HookSharedState>(), std::mem::align_of::<usize>());
     }
 }
-

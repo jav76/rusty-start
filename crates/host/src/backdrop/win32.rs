@@ -22,7 +22,8 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, EnumThreadWindows, GetCursorPos, GetWindowTextW, WS_EX_TOOLWINDOW, WS_POPUP,
+    CreateWindowExW, DestroyWindow, EnumThreadWindows, GetCursorPos, GetForegroundWindow, GetWindowTextW,
+    SetForegroundWindow, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 use windows::core::{BOOL, PCWSTR, w};
 
@@ -83,7 +84,7 @@ pub fn active_monitor_rect() -> Result<MonitorRect> {
     let mut cursor = POINT::default();
     // SAFETY: `cursor` is a valid writable `POINT`. If `GetCursorPos` fails (for example on a locked
     // desktop), `(0, 0)` still resolves to the primary monitor via `MONITOR_DEFAULTTONEAREST`.
-    let _ = unsafe { GetCursorPos(&mut cursor) };
+    let _ = unsafe { GetCursorPos(&raw mut cursor) };
 
     // SAFETY: `MonitorFromPoint` has no memory-safety preconditions.
     let monitor: HMONITOR = unsafe { MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST) };
@@ -93,7 +94,7 @@ pub fn active_monitor_rect() -> Result<MonitorRect> {
 
     let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
     // SAFETY: `info` is initialized with `cbSize` set to `size_of::<MONITORINFO>()`.
-    unsafe { GetMonitorInfoW(monitor, &mut info) }.ok().context("failed to query monitor bounds")?;
+    unsafe { GetMonitorInfoW(monitor, &raw mut info) }.ok().context("failed to query monitor bounds")?;
 
     let rc: RECT = info.rcMonitor;
     let width: u32 = u32::try_from(rc.right - rc.left).context("monitor width was not positive")?;
@@ -173,6 +174,20 @@ pub fn configure_overlay_window() {
             size_of::<u32>() as u32,
         );
     }
+}
+
+/// Brings the shown overlay to the foreground so it receives keyboard input.
+///
+/// Windows only honours this when the host may take the foreground: it received the hotkey or the
+/// last input event, or the sender of the toggle message called `AllowSetForegroundWindow` for it
+/// (see `rusty_start_protocol::TOGGLE_MESSAGE_NAME`). Returns whether the overlay is now foreground.
+pub fn focus_overlay_window() -> bool {
+    let Some(hwnd) = find_overlay_hwnd_on_current_thread() else {
+        return false;
+    };
+
+    // SAFETY: `hwnd` is a live window owned by the calling UI thread.
+    unsafe { SetForegroundWindow(hwnd) }.as_bool() || unsafe { GetForegroundWindow() } == hwnd
 }
 
 fn find_overlay_hwnd_on_current_thread() -> Option<HWND> {
@@ -283,20 +298,21 @@ impl DibSurface {
         let mut raw_bits: *mut c_void = ptr::null_mut();
         // SAFETY: `memory_dc` is valid, `info` is a valid `BITMAPINFO`, and `raw_bits` receives the
         // GDI-managed pixel buffer pointer.
-        let bitmap: HBITMAP =
-            match unsafe { CreateDIBSection(Some(memory_dc), &info, DIB_RGB_COLORS, &mut raw_bits, None, 0) } {
-                Ok(bitmap) if !bitmap.is_invalid() && !raw_bits.is_null() => bitmap,
-                Ok(_) => {
-                    // SAFETY: `memory_dc` was created above and must be cleaned up on error.
-                    let _ = unsafe { DeleteDC(memory_dc) };
-                    bail!("CreateDIBSection returned a null bitmap or pixel buffer");
-                }
-                Err(error) => {
-                    // SAFETY: `memory_dc` was created above and must be cleaned up on error.
-                    let _ = unsafe { DeleteDC(memory_dc) };
-                    return Err(error).context("CreateDIBSection failed");
-                }
-            };
+        let bitmap: HBITMAP = match unsafe {
+            CreateDIBSection(Some(memory_dc), &raw const info, DIB_RGB_COLORS, &raw mut raw_bits, None, 0)
+        } {
+            Ok(bitmap) if !bitmap.is_invalid() && !raw_bits.is_null() => bitmap,
+            Ok(_) => {
+                // SAFETY: `memory_dc` was created above and must be cleaned up on error.
+                let _ = unsafe { DeleteDC(memory_dc) };
+                bail!("CreateDIBSection returned a null bitmap or pixel buffer");
+            }
+            Err(error) => {
+                // SAFETY: `memory_dc` was created above and must be cleaned up on error.
+                let _ = unsafe { DeleteDC(memory_dc) };
+                return Err(error).context("CreateDIBSection failed");
+            }
+        };
 
         // SAFETY: both `memory_dc` and `bitmap` are live GDI handles owned by this struct.
         let previous_object: HGDIOBJ = unsafe { SelectObject(memory_dc, HGDIOBJ::from(bitmap)) };

@@ -8,12 +8,16 @@
 #[cfg(windows)]
 mod win32;
 #[cfg(windows)]
-pub use win32::{Capturer, OverlayOwner, active_monitor_rect, configure_overlay_window, install_backend};
+pub use win32::{
+    Capturer, OverlayOwner, active_monitor_rect, configure_overlay_window, focus_overlay_window, install_backend,
+};
 
 #[cfg(not(windows))]
 mod preview;
 #[cfg(not(windows))]
-pub use preview::{Capturer, OverlayOwner, active_monitor_rect, configure_overlay_window, install_backend};
+pub use preview::{
+    Capturer, OverlayOwner, active_monitor_rect, configure_overlay_window, focus_overlay_window, install_backend,
+};
 
 /// Virtual-screen rectangle of a monitor in physical pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
