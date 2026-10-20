@@ -5,7 +5,7 @@ use rusty_start_protocol::{APP_ID, DBUS_INTERFACE, DBUS_OBJECT_PATH, DBUS_TOGGLE
 use zbus::blocking::Connection;
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
 
-use crate::dbus;
+use crate::{dbus, trigger};
 
 /// Keeps the host's well-known bus name. The bus releases the name when the connection closes.
 pub struct InstanceGuard {
@@ -17,6 +17,9 @@ pub struct InstanceGuard {
 /// returns `None`.
 pub fn acquire() -> Result<Option<InstanceGuard>> {
     let connection: Connection = dbus::session()?;
+    // Serve first, so a toggle that arrives the moment the name is ours (the call that started the
+    // host through D-Bus activation) is queued rather than refused.
+    trigger::serve_toggle_interface(&connection)?;
     match connection.request_name_with_flags(APP_ID, RequestNameFlags::DoNotQueue.into()) {
         Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
             Ok(Some(InstanceGuard { _connection: connection }))

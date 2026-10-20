@@ -33,6 +33,7 @@ cargo test --workspace --locked
 | `crates/hook`              | DLL injected into `explorer.exe`. Treat it as hostile territory       |
 | `crates/protocol`          | Names and shared-memory layout used by both host and hook             |
 | `docs/adr`                 | Architecture Decision Records                                         |
+| `packaging/linux`          | Desktop entry and D-Bus service file the `.deb` installs              |
 | `GLOSSARY.md`              | Domain terms. Use them in code, comments and docs                     |
 
 ## Rust

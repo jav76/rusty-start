@@ -12,6 +12,9 @@ pub use win32::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, suppress_native_sta
 
 #[cfg(backend_linux)]
 mod linux;
+/// Linux only: the instance lock serves the interface before it claims the bus name.
+#[cfg(backend_linux)]
+pub use linux::serve_toggle_interface;
 #[cfg(backend_linux)]
 pub use linux::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, suppress_native_start_menu};
 

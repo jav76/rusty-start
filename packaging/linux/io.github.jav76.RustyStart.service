@@ -1,0 +1,4 @@
+# Starts the host when a compositor binding calls Toggle() and the host is not running yet.
+[D-BUS Service]
+Name=io.github.jav76.RustyStart
+Exec=/usr/bin/rusty-start

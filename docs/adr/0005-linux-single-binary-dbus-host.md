@@ -7,9 +7,10 @@ Accepted (2026-10-20). KDE Plasma 6 on Wayland is the first Linux target.
 ## Context
 
 Linux desktops differ in what they let a launcher do. Wayland clients cannot position windows,
-read the global cursor position, grab keys or capture the screen without compositor support. KWin
-binds Meta alone only through `kwinrc [ModifierOnlyShortcuts]`, which can call a D-Bus method
-without arguments. Slint 1.18 destroys its window on every hide under Wayland and rebuilds the winit
+read the global cursor position, grab keys or capture the screen without compositor support. On
+Plasma 6 the Meta key alone is an ordinary kglobalaccel shortcut owned by plasmashell's
+"Activate Application Launcher"; KWin's older `kwinrc [ModifierOnlyShortcuts]` entry never sees it.
+Slint 1.18 destroys its window on every hide under Wayland and rebuilds the winit
 attributes without the backend's attributes hook.
 
 ## Decision
@@ -18,9 +19,14 @@ attributes without the backend's attributes hook.
   name, a protocol, an authorization) and falls back when it is missing. There are no per-desktop
   builds; `XDG_CURRENT_DESKTOP` only chooses setup instructions and log messages.
 - **The host owns `io.github.jav76.RustyStart` on the session bus.** Owning the name is the
-  single-instance lock, like the named mutex on Windows. The host serves `Toggle()` for compositor
+  single-instance lock, like the named mutex on Windows. The host serves `Toggle()` for desktop
   bindings and `ToggleWithToken(s)` for second launches, which forward their
-  `XDG_ACTIVATION_TOKEN` and exit. Names live in `crates/protocol`.
+  `XDG_ACTIVATION_TOKEN` and exit. It serves the interface before claiming the name, so the call
+  that started it through D-Bus activation is queued, not lost. Names live in `crates/protocol`.
+- **On Plasma the Meta key is a kglobalaccel shortcut.** The host registers a `toggle` action and
+  listens for `globalShortcutPressed` in-process, so a tap costs no process launch.
+  `rusty-start setup` moves Meta from the Application Launcher (which keeps Alt+F1) to that action;
+  `--undo` gives it back.
 - **The overlay is a fullscreen winit window**, not a layer-shell surface. Fullscreen is requested
   through Slint's window properties before every show, which survive Slint's re-creation. The
   in-window Meta tap handler is off, because the compositor already delivers the toggle.

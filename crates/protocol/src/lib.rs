@@ -15,12 +15,16 @@ pub const DBUS_OBJECT_PATH: &str = "/io/github/jav76/RustyStart";
 
 /// D-Bus interface the host serves at `DBUS_OBJECT_PATH`.
 ///
-/// - `Toggle()` toggles the menu. Compositor bindings call it, for example KWin's
-///   `[ModifierOnlyShortcuts] Meta` entry, which can only call methods without arguments.
+/// - `Toggle()` toggles the menu. Desktop bindings that can call D-Bus methods use it.
 /// - `ToggleWithToken(s token)` toggles the menu and uses `token` as the xdg-activation token, so
 ///   the menu can take keyboard focus. A second `rusty-start` launch passes its
 ///   `XDG_ACTIVATION_TOKEN`, or an empty string when it has none.
 pub const DBUS_INTERFACE: &str = "io.github.jav76.RustyStart";
+
+/// kglobalaccel action ID of the global shortcut that toggles the menu on KDE Plasma:
+/// `[component, action, component display name, action display name]`. `rusty-start setup` binds
+/// the Meta key to it; the host registers it and listens for presses.
+pub const GLOBAL_SHORTCUT_ACTION_ID: [&str; 4] = [APP_ID, "toggle", "Rusty Start", "Toggle the menu"];
 
 /// `Toggle()` method of `DBUS_INTERFACE`.
 pub const DBUS_TOGGLE_METHOD: &str = "Toggle";

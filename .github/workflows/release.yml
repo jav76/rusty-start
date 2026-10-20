@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_DEB_VERSION: 3.8.0
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # Bookworm's glibc (2.36) is the oldest the binaries support, so they also run on Debian 13
+    # and Ubuntu 24.04.
+    container: debian:bookworm
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config libfontconfig-dev dpkg-dev gh
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
+        with:
+          toolchain: stable
+
+      - name: Build
+        run: cargo build -p rusty-start-host --release --locked
+
+      - name: Package
+        run: |
+          cargo install cargo-deb --version "$CARGO_DEB_VERSION" --locked
+          cargo deb -p rusty-start-host --no-build --output target/dist/
+          staging="rusty-start-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
+          mkdir -p "target/dist/$staging"
+          cp target/release/rusty-start packaging/linux/* README.md LICENSE "target/dist/$staging/"
+          tar -C target/dist -czf "target/dist/$staging.tar.gz" "$staging"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Both architecture jobs try to create the release; the second one finds it exists.
+          gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag || true
+          gh release upload "$GITHUB_REF_NAME" target/dist/*.deb target/dist/*.tar.gz --clobber
