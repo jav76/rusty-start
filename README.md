@@ -112,8 +112,9 @@ io.github.jav76.RustyStart Toggle`.
 
 ## Checks
 
-CI runs on `windows-latest` and in a `debian:bookworm` container for every push to `main` and every
-pull request. Run the same checks locally before opening a PR:
+CI runs in a `debian:bookworm` container on a self-hosted Linux runner for every push to `main` and
+every pull request, and lints the Windows backend with cross-target clippy. Run the same checks
+locally before opening a PR:
 
 ```
 cargo fmt --all -- --check

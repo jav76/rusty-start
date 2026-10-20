@@ -6,8 +6,10 @@ conflicts with a tool, fix the tool config instead of working around it.
 
 ## Commands
 
-Run these before calling a change done. CI runs the same commands on `windows-latest` and in a
-`debian:bookworm` container.
+Run these before calling a change done. CI runs them in a `debian:bookworm` container on the
+project's self-hosted Linux runner, and checks the Windows backend with
+`cargo clippy --target x86_64-pc-windows-msvc`. Windows-only tests run only on Windows, so run
+`cargo test --workspace --locked` there for changes to Windows code.
 
 ```
 cargo fmt --all -- --check

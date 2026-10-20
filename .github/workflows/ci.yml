@@ -15,32 +15,8 @@ env:
 jobs:
   check:
     name: fmt, clippy, test
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-      - name: Clippy (preview backend)
-        run: cargo clippy -p rusty-start-host --all-targets --locked --features preview -- -D warnings
-
-      - name: Test
-        run: cargo test --workspace --locked
-
-  check-linux:
-    name: fmt, clippy, test (Linux)
-    runs-on: ubuntu-latest
+    # The project's self-hosted Linux runner. It needs Docker for the container below.
+    runs-on: [self-hosted, Linux, X64, rusty-start]
     # Release builds use bookworm too, so its glibc is the oldest the binaries support.
     container: debian:bookworm
     steps:
@@ -55,17 +31,27 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Format
         run: cargo fmt --all -- --check
 
-      - name: Clippy
+      - name: Clippy (Linux)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Clippy (preview backend)
         run: cargo clippy -p rusty-start-host --all-targets --locked --features preview -- -D warnings
+
+      # There is no Windows runner, so the Windows backend is type-checked and linted by cross-target
+      # clippy. Its Windows-only tests run only on Windows.
+      - name: Clippy (Windows)
+        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+
+      - name: Clippy (Windows preview backend)
+        run: |
+          cargo clippy -p rusty-start-host --all-targets --locked --features preview --target x86_64-pc-windows-msvc -- -D warnings
 
       - name: Test
         run: cargo test --workspace --locked
