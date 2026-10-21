@@ -10,7 +10,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_DEB_VERSION: 3.8.0
+  CARGO_XWIN_VERSION: 0.23.1
 
+# Every target is built on the project's self-hosted x86_64 Linux runner: arm64 Linux is cross-linked
+# against Debian's multiarch libraries, and Windows is cross-compiled with cargo-xwin. None of the
+# cross builds are run in CI.
 jobs:
   linux:
     name: Linux ${{ matrix.arch }}
@@ -18,35 +22,48 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
           - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
+            target: aarch64-unknown-linux-gnu
+    runs-on: [self-hosted, Linux, X64, rusty-start]
     # Bookworm's glibc (2.36) is the oldest the binaries support, so they also run on Debian 13
     # and Ubuntu 24.04.
     container: debian:bookworm
+    env:
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      # Bookworm ships no aarch64 pkg-config wrapper, so point pkg-config at the multiarch .pc files.
+      PKG_CONFIG_ALLOW_CROSS: 1
+      PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
     steps:
       - name: Install build dependencies
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config libfontconfig-dev dpkg-dev gh
 
+      - name: Install arm64 cross toolchain
+        if: matrix.arch == 'arm64'
+        run: |
+          dpkg --add-architecture arm64
+          apt-get update
+          apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross libfontconfig-dev:arm64
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
         with:
           toolchain: stable
+          targets: ${{ matrix.target }}
 
       - name: Build
-        run: cargo build -p rusty-start-host --release --locked
+        run: cargo build -p rusty-start-host --release --locked --target ${{ matrix.target }}
 
       - name: Package
         run: |
           cargo install cargo-deb --version "$CARGO_DEB_VERSION" --locked
-          cargo deb -p rusty-start-host --no-build --output target/dist/
+          cargo deb -p rusty-start-host --no-build --target ${{ matrix.target }} --output target/dist/
           staging="rusty-start-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
           mkdir -p "target/dist/$staging"
-          cp target/release/rusty-start packaging/linux/* README.md LICENSE "target/dist/$staging/"
+          cp target/${{ matrix.target }}/release/rusty-start packaging/linux/* README.md LICENSE "target/dist/$staging/"
           tar -C target/dist -czf "target/dist/$staging.tar.gz" "$staging"
 
       - name: Publish
@@ -54,6 +71,64 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          # Both architecture jobs try to create the release; the second one finds it exists.
+          # Every build job tries to create the release; the later ones find it exists.
           gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag || true
           gh release upload "$GITHUB_REF_NAME" target/dist/*.deb target/dist/*.tar.gz --clobber
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+            xwin_arch: x86_64
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
+            xwin_arch: aarch64
+    runs-on: [self-hosted, Linux, X64, rusty-start]
+    container: debian:bookworm
+    env:
+      # cargo-xwin downloads the MSVC CRT and Windows SDK, which accepts Microsoft's license for them:
+      # https://go.microsoft.com/fwlink/?LinkId=2086102
+      XWIN_ARCH: ${{ matrix.xwin_arch }}
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential clang lld llvm zip gh
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install cargo-xwin
+        run: cargo install cargo-xwin --version "$CARGO_XWIN_VERSION" --locked
+
+      # The workspace build includes the explorer hook DLL, which must match the architecture of
+      # explorer.exe, so each architecture ships its own.
+      - name: Build
+        env:
+          # Links the C runtime statically, so neither the zip nor the hook DLL inside explorer.exe
+          # depends on the Visual C++ Redistributable (VCRUNTIME140.dll) being installed.
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo xwin build --workspace --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          staging="rusty-start-${GITHUB_REF_NAME}-windows-${{ matrix.arch }}"
+          mkdir -p "target/dist/$staging"
+          cp target/${{ matrix.target }}/release/rusty-start.exe target/${{ matrix.target }}/release/rusty_start_hook.dll \
+            README.md LICENSE "target/dist/$staging/"
+          (cd target/dist && zip -r "$staging.zip" "$staging")
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag || true
+          gh release upload "$GITHUB_REF_NAME" target/dist/*.zip --clobber

@@ -76,6 +76,13 @@ host runs per session: launching `rusty-start` again toggles the running host's 
 Known limitation on Windows: clicking the taskbar Start button still opens the native Start menu.
 The Windows key is the supported trigger.
 
+## Installing on Windows
+
+Releases ship a `.zip` for x64 and arm64 (Windows on ARM). Extract it anywhere and run
+`rusty-start.exe`. Keep `rusty_start_hook.dll` in the same folder: the host loads the explorer
+taskbar hook from there, and keeps running without it. The binaries are not code-signed, so
+SmartScreen may ask before the first run.
+
 ## Installing on Linux
 
 Releases ship a `.deb` and a `.tar.gz` for amd64 and arm64. The package installs `/usr/bin/rusty-start`,
@@ -159,8 +166,10 @@ busctl --user call io.github.jav76.RustyStart /io/github/jav76/RustyStart io.git
 ## Development
 
 CI runs in a `debian:bookworm` container on a self-hosted Linux runner for every push to `main` and
-every pull request, and lints the Windows backend with cross-target clippy. Run the same checks
-locally before opening a PR:
+every pull request, and lints the Windows backend with cross-target clippy. Tagged releases build
+on the same runner: Linux amd64 natively, Linux arm64 by cross-linking against Debian's multiarch
+libraries, and Windows x64 and arm64 with [cargo-xwin](https://github.com/rust-cross/cargo-xwin).
+Cross-built binaries are not run in CI. Run the same checks locally before opening a PR:
 
 ```
 cargo fmt --all -- --check
