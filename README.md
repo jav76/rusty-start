@@ -9,7 +9,7 @@
 [![Rust 1.92+](https://img.shields.io/badge/rust-1.92%2B-orange?logo=rust)](https://rustup.rs)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%2011%20%7C%20KDE%20Plasma%206-0078D4)](#requirements)
 [![UI: Slint](https://img.shields.io/badge/UI-Slint-2379F4)](https://slint.dev)
-[![GPU: OpenGL](https://img.shields.io/badge/GPU-OpenGL%20%2F%20GLSL-5586A4?logo=opengl)](docs/adr/0001-gpu-liquid-glass-underlay.md)
+[![GPU: OpenGL](https://img.shields.io/badge/GPU-OpenGL%20%2F%20GLSL-5586A4?logo=opengl)](#highlights)
 
 <img src="docs/media/demo.gif" alt="Rusty Start opening over a blurred KDE Plasma desktop: browsing the app list, pinning and launching Calculator, then searching and opening the power menu" width="820">
 
@@ -28,13 +28,13 @@ snapshot of your desktop, ready to search before you finish typing.
   desktop snapshot included, and the app index (153 apps) builds in 9 ms on a background thread.
 - **Liquid glass on the GPU.** A custom GLSL pass blurs the desktop through a dual-Kawase mip
   pyramid and refracts it through the card's bevel with chromatic dispersion, all animated from
-  zero, which native acrylic blur cannot do ([ADR 0001](docs/adr/0001-gpu-liquid-glass-underlay.md)).
+  zero.
 - **Keyboard first.** Search as you type, Enter to launch, Ctrl+P to pin. Results rank by match
   quality, then by how often and how recently you launch each app.
 - **Native on both platforms.** Windows uses Win32, COM and a GDI snapshot. Linux uses D-Bus,
   kglobalaccel, KWin ScreenShot2, Desktop Entry and Icon Theme parsing, and launches apps into
   their own systemd scopes. One Linux binary probes each capability at runtime and falls back
-  gracefully ([ADR 0005](docs/adr/0005-linux-single-binary-dbus-host.md)).
+  gracefully.
 - **Built to be maintained.** Platform backends share one API per module, a preview backend runs
   the full UI on any OS, and CI runs fmt, clippy (Linux, preview and cross-target Windows) and tests.
 
@@ -54,17 +54,7 @@ flowchart LR
 The host stays resident with its window hidden, so opening the menu only captures the screen,
 uploads one texture and renders. If the desktop snapshot is unavailable or takes longer than
 100 ms, the menu opens as **Plain Glass**: a dimmed veil with an unrefracted card, so it never
-waits on the compositor ([ADR 0004](docs/adr/0004-linux-kwin-screenshot-backdrop.md)).
-
-### Design decisions
-
-| ADR | Decision |
-| --- | -------- |
-| [0001](docs/adr/0001-gpu-liquid-glass-underlay.md) | Pre-show GDI snapshot and an OpenGL underlay instead of DWM acrylic |
-| [0002](docs/adr/0002-explorer-taskbar-hook-dll.md) | In-process Explorer hook DLL for taskbar Start clicks, and why it no longer works |
-| [0003](docs/adr/0003-usage-file-format.md) | Tab-separated `usage.tsv` for pins and launch history |
-| [0004](docs/adr/0004-linux-kwin-screenshot-backdrop.md) | KWin ScreenShot2 snapshot with a Plain Glass fallback |
-| [0005](docs/adr/0005-linux-single-binary-dbus-host.md) | One Linux binary, a session-bus host and a fullscreen winit overlay |
+waits on the compositor.
 
 ## Requirements
 
@@ -84,8 +74,7 @@ Debug builds show a console window for diagnostic output on Windows; release bui
 host runs per session: launching `rusty-start` again toggles the running host's menu and exits.
 
 Known limitation on Windows: clicking the taskbar Start button still opens the native Start menu.
-The XAML taskbar receives clicks outside the message queue, so the explorer hook never sees them
-([ADR 0002](docs/adr/0002-explorer-taskbar-hook-dll.md)). The Windows key is the supported trigger.
+The Windows key is the supported trigger.
 
 ## Installing on Linux
 
@@ -155,8 +144,7 @@ Linux):
 On Linux the Meta key binding belongs to the desktop, so `use_win_key` has no effect there; use
 `rusty-start setup` or `rusty-start setup --undo` instead.
 
-Pins and launch history are saved to `usage.tsv` in the same folder (format in
-[ADR 0003](docs/adr/0003-usage-file-format.md)).
+Pins and launch history are saved to `usage.tsv` in the same folder.
 
 If another application already owns Ctrl+Alt+Space, the host logs a warning and keeps running. Other
 programs can toggle the menu by posting the `RustyStart.ToggleMenu` message to the
