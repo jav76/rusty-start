@@ -206,6 +206,9 @@ pub fn configure_overlay_window() {
     }
 }
 
+/// `configure_overlay_window` already turns off DWM's open transition.
+pub fn prepare_overlay_surface(_window: &slint::Window) {}
+
 /// Brings the shown overlay to the foreground so it receives keyboard input.
 ///
 /// Windows only honours this when the host may take the foreground: it received the hotkey or the

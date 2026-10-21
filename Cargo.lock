@@ -3728,6 +3728,8 @@ dependencies = [
  "rusty-start-protocol",
  "slint",
  "slint-build",
+ "wayland-client",
+ "wayland-protocols-plasma",
  "windows",
  "zbus",
 ]

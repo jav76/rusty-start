@@ -11,15 +11,17 @@ mod win32;
 #[cfg(backend_win32)]
 pub use win32::{
     Capturer, OVERLAY_FOLLOWS_WINDOW_SIZE, OverlayOwner, active_monitor_rect, configure_overlay_window,
-    focus_overlay_window, install_backend, keep_overlay_fullscreen, place_overlay_window,
+    focus_overlay_window, install_backend, keep_overlay_fullscreen, place_overlay_window, prepare_overlay_surface,
 };
 
 #[cfg(backend_linux)]
 mod linux;
 #[cfg(backend_linux)]
+mod plasma_shell;
+#[cfg(backend_linux)]
 pub use linux::{
     Capturer, OVERLAY_FOLLOWS_WINDOW_SIZE, OverlayOwner, active_monitor_rect, configure_overlay_window,
-    focus_overlay_window, install_backend, keep_overlay_fullscreen, place_overlay_window,
+    focus_overlay_window, install_backend, keep_overlay_fullscreen, place_overlay_window, prepare_overlay_surface,
 };
 
 #[cfg(backend_preview)]
@@ -27,7 +29,7 @@ mod preview;
 #[cfg(backend_preview)]
 pub use preview::{
     Capturer, OVERLAY_FOLLOWS_WINDOW_SIZE, OverlayOwner, active_monitor_rect, configure_overlay_window,
-    focus_overlay_window, install_backend, keep_overlay_fullscreen, place_overlay_window,
+    focus_overlay_window, install_backend, keep_overlay_fullscreen, place_overlay_window, prepare_overlay_surface,
 };
 
 #[cfg(backend_preview)]

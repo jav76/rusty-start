@@ -44,6 +44,11 @@ attributes without the backend's attributes hook.
   backend asks winit directly when a window exists and uses the property only after a hide.
 - The fullscreen window can appear in the taskbar and Alt+Tab while open unless the same KWin rule
   hides it.
+- KWin's Scale effect grows every new normal window from a smaller size, so the Fog Veil looked
+  like a window opening. Each overlay window therefore takes the `appletpopup` role of
+  `org_kde_plasma_shell` (the role of Plasma's own launcher popups) before its first frame, which
+  Fading Popups fades in instead. A KWin window rule cannot do this: KWin ignores the window type
+  rule for Wayland windows. Compositors without the protocol keep the default role.
 
 ## Measurements (2026-10-20)
 

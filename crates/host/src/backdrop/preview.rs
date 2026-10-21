@@ -35,6 +35,8 @@ pub fn keep_overlay_fullscreen(_window: &slint::Window) -> bool {
 
 pub fn configure_overlay_window() {}
 
+pub fn prepare_overlay_surface(_window: &slint::Window) {}
+
 pub fn focus_overlay_window() -> bool {
     true
 }
