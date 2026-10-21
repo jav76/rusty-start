@@ -1,18 +1,70 @@
+<div align="center">
+
 # Rusty Start
 
-A performance-focused replacement for the Windows 11 Start menu, written in Rust. It also runs as an
-app launcher on Linux, with KDE Plasma 6 on Wayland as the first supported desktop.
+**A performance-focused Start menu and app launcher, written in Rust, with GPU-rendered liquid glass.**
 
-## Status
+[![CI](https://github.com/jav76/rusty-start/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jav76/rusty-start/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/jav76/rusty-start)](LICENSE)
+[![Rust 1.92+](https://img.shields.io/badge/rust-1.92%2B-orange?logo=rust)](https://rustup.rs)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%2011%20%7C%20KDE%20Plasma%206-0078D4)](#requirements)
+[![UI: Slint](https://img.shields.io/badge/UI-Slint-2379F4)](https://slint.dev)
+[![GPU: OpenGL](https://img.shields.io/badge/GPU-OpenGL%20%2F%20GLSL-5586A4?logo=opengl)](docs/adr/0001-gpu-liquid-glass-underlay.md)
 
-The host runs resident with its menu hidden and opens it when you tap the Windows (Meta) key. It
-lists installed apps with their icons, keeps pinned and recent apps at the top, searches as you
-type, launches apps, and offers lock, sign out, sleep, restart and shut down.
+<img src="docs/media/demo.gif" alt="Rusty Start opening over a blurred KDE Plasma desktop: browsing the app list, pinning and launching Calculator, then searching and opening the power menu" width="820">
 
-Known limitation: clicking the taskbar Start button still opens the native Windows 11 Start menu. The
-XAML taskbar receives clicks outside the message queue, so the explorer hook (`rusty_start_hook.dll`)
-never sees them (see `docs/adr/0002-explorer-taskbar-hook-dll.md`). Supporting the click is deferred;
-the Windows key is the supported trigger.
+<sub>Tap Meta, pin and launch an app, then search and open the power menu. Real time, KDE Plasma 6 on Wayland.</sub>
+
+</div>
+
+Rusty Start replaces the Windows 11 Start menu, and runs as an app launcher on Linux with KDE
+Plasma 6 on Wayland. Tap the Windows (Meta) key and a frosted glass card appears over a blurred
+snapshot of your desktop, ready to search before you finish typing.
+
+## Highlights
+
+- **Fast to open.** The trigger-to-first-frame path does no disk I/O and no work proportional to
+  installed apps. On a 3440x1440 Plasma desktop the first frame lands 43-75 ms after the key tap,
+  desktop snapshot included, and the app index (153 apps) builds in 9 ms on a background thread.
+- **Liquid glass on the GPU.** A custom GLSL pass blurs the desktop through a dual-Kawase mip
+  pyramid and refracts it through the card's bevel with chromatic dispersion, all animated from
+  zero, which native acrylic blur cannot do ([ADR 0001](docs/adr/0001-gpu-liquid-glass-underlay.md)).
+- **Keyboard first.** Search as you type, Enter to launch, Ctrl+P to pin. Results rank by match
+  quality, then by how often and how recently you launch each app.
+- **Native on both platforms.** Windows uses Win32, COM and a GDI snapshot. Linux uses D-Bus,
+  kglobalaccel, KWin ScreenShot2, Desktop Entry and Icon Theme parsing, and launches apps into
+  their own systemd scopes. One Linux binary probes each capability at runtime and falls back
+  gracefully ([ADR 0005](docs/adr/0005-linux-single-binary-dbus-host.md)).
+- **Built to be maintained.** Platform backends share one API per module, a preview backend runs
+  the full UI on any OS, and CI runs fmt, clippy (Linux, preview and cross-target Windows) and tests.
+
+## How it works
+
+```mermaid
+flowchart LR
+    trigger["Trigger<br/>Win key · Meta via kglobalaccel<br/>D-Bus Toggle()"] --> host["Resident host"]
+    index["App index<br/>background thread"] --> host
+    host --> snapshot["Desktop snapshot<br/>GDI BitBlt · KWin ScreenShot2"]
+    host --> window["Overlay window<br/>Slint + winit"]
+    snapshot --> glass["GLSL glass pass<br/>blur, refraction, Fog Veil"]
+    window --> glass
+    glass --> frame["First frame"]
+```
+
+The host stays resident with its window hidden, so opening the menu only captures the screen,
+uploads one texture and renders. If the desktop snapshot is unavailable or takes longer than
+100 ms, the menu opens as **Plain Glass**: a dimmed veil with an unrefracted card, so it never
+waits on the compositor ([ADR 0004](docs/adr/0004-linux-kwin-screenshot-backdrop.md)).
+
+### Design decisions
+
+| ADR | Decision |
+| --- | -------- |
+| [0001](docs/adr/0001-gpu-liquid-glass-underlay.md) | Pre-show GDI snapshot and an OpenGL underlay instead of DWM acrylic |
+| [0002](docs/adr/0002-explorer-taskbar-hook-dll.md) | In-process Explorer hook DLL for taskbar Start clicks, and why it no longer works |
+| [0003](docs/adr/0003-usage-file-format.md) | Tab-separated `usage.tsv` for pins and launch history |
+| [0004](docs/adr/0004-linux-kwin-screenshot-backdrop.md) | KWin ScreenShot2 snapshot with a Plain Glass fallback |
+| [0005](docs/adr/0005-linux-single-binary-dbus-host.md) | One Linux binary, a session-bus host and a fullscreen winit overlay |
 
 ## Requirements
 
@@ -30,6 +82,10 @@ cargo run -p rusty-start-host
 
 Debug builds show a console window for diagnostic output on Windows; release builds do not. Only one
 host runs per session: launching `rusty-start` again toggles the running host's menu and exits.
+
+Known limitation on Windows: clicking the taskbar Start button still opens the native Start menu.
+The XAML taskbar receives clicks outside the message queue, so the explorer hook never sees them
+([ADR 0002](docs/adr/0002-explorer-taskbar-hook-dll.md)). The Windows key is the supported trigger.
 
 ## Installing on Linux
 
@@ -56,8 +112,7 @@ toggles the menu.
 
 Running from a build directory (`cargo run`), add `--dev`: `rusty-start setup --dev` also installs a
 hidden desktop entry for the current executable. KWin only shares desktop snapshots with executables
-listed in an installed desktop entry; without one the menu opens as Plain Glass, a dimmed veil with
-an unrefracted card.
+listed in an installed desktop entry; without one the menu opens as Plain Glass.
 
 ## Usage
 
@@ -82,8 +137,8 @@ an unrefracted card.
 - The app list refreshes in the background when apps are installed or removed, and the new list
   appears the next time the menu opens. On Linux, apps come from `.desktop` files in
   `~/.local/share/applications` and the system and Flatpak application folders, and launched apps
-  run in their own systemd scope, so they keep running if Rusty Start stops. Icons load after the list, so rows show a placeholder tile
-  for a second or two after startup.
+  run in their own systemd scope, so they keep running if Rusty Start stops. Icons load after the
+  list, so rows show a placeholder tile for a second or two after startup.
 
 ## Configuration
 
@@ -101,16 +156,19 @@ On Linux the Meta key binding belongs to the desktop, so `use_win_key` has no ef
 `rusty-start setup` or `rusty-start setup --undo` instead.
 
 Pins and launch history are saved to `usage.tsv` in the same folder (format in
-`docs/adr/0003-usage-file-format.md`).
+[ADR 0003](docs/adr/0003-usage-file-format.md)).
 
 If another application already owns Ctrl+Alt+Space, the host logs a warning and keeps running. Other
 programs can toggle the menu by posting the `RustyStart.ToggleMenu` message to the
 `RustyStart.TriggerWindow` window, after calling `AllowSetForegroundWindow` with the host's process ID
 so the menu can take keyboard focus (see `crates/protocol`). On Linux, call `Toggle()` on the
-session bus: `busctl --user call io.github.jav76.RustyStart /io/github/jav76/RustyStart
-io.github.jav76.RustyStart Toggle`.
+session bus:
 
-## Checks
+```
+busctl --user call io.github.jav76.RustyStart /io/github/jav76/RustyStart io.github.jav76.RustyStart Toggle
+```
+
+## Development
 
 CI runs in a `debian:bookworm` container on a self-hosted Linux runner for every push to `main` and
 every pull request, and lints the Windows backend with cross-target clippy. Run the same checks
@@ -123,13 +181,11 @@ cargo clippy -p rusty-start-host --all-targets --locked --features preview -- -D
 cargo test --workspace --locked
 ```
 
-Linux builds need `pkg-config` and `libfontconfig-dev` (`sudo apt install pkg-config
-libfontconfig-dev` on Debian).
-
 `--features preview` builds the preview backend on any OS: the menu opens once at startup over a
 synthetic desktop backdrop with a fixed sample app list, so the Liquid-Glass shaders and UI can be
 iterated on without desktop integration. Windows integration can only be tested on Windows, and
-Linux desktop integration on a Linux desktop session.
+Linux desktop integration on a Linux desktop session. [AGENTS.md](AGENTS.md) holds the coding
+standards for contributors and coding agents.
 
 ## Project layout
 
@@ -137,7 +193,7 @@ Linux desktop integration on a Linux desktop session.
 | ----------------- | -------------------------------------------------------------------------------------------- |
 | `crates/host`     | Resident process: Liquid-Glass GPU shaders, desktop capture, Slint UI, triggers, app search, pins and power actions |
 | `crates/hook`     | In-process Explorer hook DLL: Start button click suppression and IPC trigger dispatch        |
-| `crates/protocol` | Window class, message names, mutex name, and shared memory geometry shared by host and hook |
+| `crates/protocol` | Window class, message names, mutex name, D-Bus names and shared memory geometry shared by host and hook |
 | `GLOSSARY.md`     | Domain terminology such as the Fog Veil, Liquid-Glass Card, Card Anchor and Frecency          |
 | `docs/adr`        | Architecture Decision Records                                                                |
 | `packaging/linux` | Desktop entry and D-Bus service file installed by the `.deb`                                 |
