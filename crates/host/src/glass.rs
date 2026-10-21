@@ -111,6 +111,9 @@ pub fn install_rendering_notifier(start_menu: &StartMenu, state: Rc<RefCell<Glas
         match rendering_state {
             RenderingState::RenderingSetup => {
                 backdrop::configure_overlay_window();
+                if let Some(menu) = weak_menu.upgrade() {
+                    backdrop::prepare_overlay_surface(menu.window());
+                }
                 if let GraphicsAPI::NativeOpenGL { get_proc_address } = graphics_api {
                     // SAFETY: `get_proc_address` queries live OpenGL entry points for the current context.
                     let gl = unsafe { Context::from_loader_function_cstr(|name| get_proc_address(name)) };

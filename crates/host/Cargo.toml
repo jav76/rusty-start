@@ -26,6 +26,8 @@ slint = { workspace = true, features = ["std", "compat-1-2", "backend-winit", "r
 png.workspace = true
 resvg.workspace = true
 rustix.workspace = true
+wayland-client.workspace = true
+wayland-protocols-plasma.workspace = true
 zbus.workspace = true
 
 [target.'cfg(windows)'.dependencies]

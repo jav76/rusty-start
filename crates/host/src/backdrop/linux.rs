@@ -24,7 +24,7 @@ use slint::winit_030::winit::platform::startup_notify::WindowAttributesExtStartu
 use slint::winit_030::winit::window::{ActivationToken, Fullscreen};
 use zbus::zvariant::{Fd, OwnedValue, Value};
 
-use super::{CaptureUnavailable, MonitorRect, MonitorSnapshot, kwin_image};
+use super::{CaptureUnavailable, MonitorRect, MonitorSnapshot, kwin_image, plasma_shell};
 use crate::dbus;
 
 /// Layout size until the compositor reports the fullscreen size.
@@ -98,6 +98,12 @@ pub fn keep_overlay_fullscreen(window: &slint::Window) -> bool {
 }
 
 pub fn configure_overlay_window() {}
+
+/// Gives a new overlay window the Plasma applet popup role, so KWin does not animate it like an
+/// opening window. Runs when Slint sets up rendering for the window, before its first frame.
+pub fn prepare_overlay_surface(window: &slint::Window) {
+    window.with_winit_window(plasma_shell::set_applet_popup_role);
+}
 
 /// The compositor decides focus on Wayland. The menu learns the outcome from focus events.
 pub fn focus_overlay_window() -> bool {
