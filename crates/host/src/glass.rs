@@ -22,7 +22,7 @@ use slint::{ComponentHandle, GraphicsAPI, RenderingState};
 
 use crate::StartMenu;
 use crate::backdrop::{self, MonitorRect, MonitorSnapshot};
-use crate::config::{CARD_HEIGHT, CARD_WIDTH, Config};
+use crate::config::{CARD_HEIGHT, CARD_WIDTH, Config, MAX_VEIL_BLUR};
 
 /// Shared parameters updated by `menu.rs` on the UI thread and consumed by the OpenGL underlay
 /// callback during `RenderingState::BeforeRendering`.
@@ -170,6 +170,8 @@ struct CompositeUniforms {
     progress: Option<UniformLocation>,
     dpi: Option<UniformLocation>,
     plain: Option<UniformLocation>,
+    veil_mode: Option<UniformLocation>,
+    veil_blur: Option<UniformLocation>,
 }
 
 struct RenderTarget {
@@ -245,6 +247,8 @@ impl GlassRenderer {
                 progress: gl.get_uniform_location(composite_prog, "u_progress"),
                 dpi: gl.get_uniform_location(composite_prog, "u_dpi"),
                 plain: gl.get_uniform_location(composite_prog, "u_plain"),
+                veil_mode: gl.get_uniform_location(composite_prog, "u_veil_mode"),
+                veil_blur: gl.get_uniform_location(composite_prog, "u_veil_blur"),
             };
 
             Ok(Self {
@@ -320,6 +324,11 @@ impl GlassRenderer {
                 gl.uniform_1_i32(self.composite_uniforms.blur_mild.as_ref(), 3);
 
                 gl.uniform_1_f32(self.composite_uniforms.plain.as_ref(), if state.plain { 1.0 } else { 0.0 });
+                gl.uniform_1_f32(self.composite_uniforms.veil_mode.as_ref(), state.config.veil_mode.index() as f32);
+                gl.uniform_1_f32(
+                    self.composite_uniforms.veil_blur.as_ref(),
+                    f32::from(state.config.veil_blur) / f32::from(MAX_VEIL_BLUR),
+                );
                 gl.uniform_2_f32(self.composite_uniforms.resolution.as_ref(), vp_w as f32, vp_h as f32);
                 gl.uniform_4_f32(
                     self.composite_uniforms.card_rect.as_ref(),
@@ -704,6 +713,10 @@ uniform float u_dpi;
 // 1.0 draws Plain Glass: no snapshot, so the Fog Veil and Liquid-Glass Card are tinted over the
 // live desktop the transparent window shows, without blur or refraction.
 uniform float u_plain;
+// Veil Mode: 0.0 Fog Veil, 1.0 Dim (tint over the live desktop, like Plain Glass), 2.0 Off (card
+// only). `u_veil_blur` scales how far up the blur ladder the Fog Veil climbs, from 0.0 to 1.0.
+uniform float u_veil_mode;
+uniform float u_veil_blur;
 
 const float PLAIN_VEIL_OPACITY = 0.55;
 const float PLAIN_CARD_OPACITY = 0.92;
@@ -741,9 +754,10 @@ void main() {
     vec3 fog_mid = texture(u_blur_fog, v_uv).rgb;
     vec3 fog_deep = texture(u_blur_deep, v_uv).rgb;
 
-    vec3 outer_fog = mix(sharp, fog_mild, smoothstep(0.0, 0.35, ease));
-    outer_fog = mix(outer_fog, fog_mid, smoothstep(0.2, 0.7, ease));
-    outer_fog = mix(outer_fog, fog_deep, smoothstep(0.5, 1.0, ease) * 0.72);
+    float blur_ease = ease * clamp(u_veil_blur, 0.0, 1.0);
+    vec3 outer_fog = mix(sharp, fog_mild, smoothstep(0.0, 0.35, blur_ease));
+    outer_fog = mix(outer_fog, fog_mid, smoothstep(0.2, 0.7, blur_ease));
+    outer_fog = mix(outer_fog, fog_deep, smoothstep(0.5, 1.0, blur_ease) * 0.72);
 
     // Atmospheric mist tint & gentle radial vignette on the fogged desktop.
     vec2 centered_uv = v_uv - vec2(0.5);
@@ -755,9 +769,12 @@ void main() {
     //    desktop, so the handoff between the two is invisible in both directions.
     float veil_alpha = smoothstep(0.0, 0.1, ease);
     bool plain = u_plain > 0.5;
-    if (plain) {
+    if (plain || u_veil_mode > 0.5) {
         outer_fog = mist_tint;
         veil_alpha = PLAIN_VEIL_OPACITY * ease;
+    }
+    if (u_veil_mode > 1.5) {
+        veil_alpha = 0.0;
     }
 
     // 2. Floating 640x720 Liquid-Glass Card SDF geometry (in top-left physical coordinates).

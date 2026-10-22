@@ -7,8 +7,10 @@
 //! When `use_win_key` is enabled in `config.toml` (the default), the trigger thread also installs a
 //! `WH_KEYBOARD_LL` hook that opens `rusty-start` on a solo Windows-key tap (`VK_LWIN` / `VK_RWIN`
 //! released without any other key pressed) while preserving all `Win+<Key>` system shortcuts.
+//! The Settings Page turns the hook on and off at runtime through `set_win_key`.
 
 use std::cell::Cell;
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
@@ -25,12 +27,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, HC_ACTION, HHOOK,
     KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLKHF_UP, MSG, PostMessageW, PostThreadMessageW, RegisterClassExW,
     RegisterWindowMessageW, SetWindowsHookExW, UnhookWindowsHookEx, UnregisterClassW, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_DISPLAYCHANGE, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SETTINGCHANGE, WM_SYSKEYDOWN,
+    WINDOW_STYLE, WM_APP, WM_DISPLAYCHANGE, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SETTINGCHANGE, WM_SYSKEYDOWN,
     WM_SYSKEYUP, WNDCLASSEXW,
 };
 use windows::core::{HSTRING, PCWSTR};
 
 use crate::config::Config;
+use crate::setup::{ItemState, SetupItem};
 use crate::taskbar::TaskbarHookGuard;
 
 /// The low-level hook does not see keys while the menu has keyboard focus, so the menu window
@@ -39,6 +42,65 @@ pub const MENU_HANDLES_WIN_KEY: bool = true;
 
 /// Identifies the fallback development hotkey, Ctrl+Alt+Space.
 const DEV_HOTKEY_ID: i32 = 1;
+
+/// Thread message asking the trigger thread to install (`wParam` 1) or remove (0) the Windows-key
+/// hook. Private to this process, so it lives here rather than in `crates/protocol`.
+const SET_WIN_KEY_MESSAGE: u32 = WM_APP + 1;
+
+/// Trigger thread ID for `set_win_key`, or 0 while no trigger thread runs.
+static TRIGGER_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+static WIN_KEY_HOOK: AtomicU8 = AtomicU8::new(HookStatus::Off as u8);
+static TASKBAR_HOOK: AtomicU8 = AtomicU8::new(HookStatus::Off as u8);
+
+/// Runtime state of a hook, reported in the Setup Audit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum HookStatus {
+    /// Turned off in `config.toml`.
+    Off,
+    Active,
+    Failed,
+}
+
+impl HookStatus {
+    fn load(status: &AtomicU8) -> Self {
+        match status.load(Ordering::Relaxed) {
+            1 => Self::Active,
+            2 => Self::Failed,
+            _ => Self::Off,
+        }
+    }
+
+    fn store(self, status: &AtomicU8) {
+        status.store(self as u8, Ordering::Relaxed);
+    }
+}
+
+/// Installs or removes the Windows-key hook on the trigger thread. Safe to call from any thread.
+pub fn set_win_key(enabled: bool) {
+    let thread_id: u32 = TRIGGER_THREAD_ID.load(Ordering::Relaxed);
+    if thread_id == 0 {
+        return;
+    }
+    // SAFETY: PostThreadMessageW has no memory-safety preconditions.
+    let posted = unsafe { PostThreadMessageW(thread_id, SET_WIN_KEY_MESSAGE, WPARAM(usize::from(enabled)), LPARAM(0)) };
+    if let Err(error) = posted {
+        eprintln!("failed to change the Windows-key hook: {error}");
+    }
+}
+
+/// Read-only Setup Audit rows for the hooks this process installed.
+pub fn status_items() -> Vec<SetupItem> {
+    let row = |label: &'static str, status: HookStatus, failure: &'static str| match status {
+        HookStatus::Active => SetupItem::new(label, ItemState::Installed, "active"),
+        HookStatus::Failed => SetupItem::new(label, ItemState::Conflict, failure),
+        HookStatus::Off => SetupItem::new(label, ItemState::Unavailable, "turned off"),
+    };
+    vec![
+        row("Windows key hook", HookStatus::load(&WIN_KEY_HOOK), "failed to install; Ctrl+Alt+Space still works"),
+        row("Taskbar hook", HookStatus::load(&TASKBAR_HOOK), "failed to inject into Explorer"),
+    ]
+}
 
 thread_local! {
     static HOOK_STATE: Cell<HookState> = const { Cell::new(HookState::new()) };
@@ -173,9 +235,11 @@ fn run_trigger_thread(on_toggle: impl Fn(), ready: &mpsc::Sender<Result<u32>>) {
     // and TriggerGuard needs that queue to deliver WM_QUIT.
     // SAFETY: GetCurrentThreadId has no preconditions.
     let thread_id: u32 = unsafe { GetCurrentThreadId() };
+    TRIGGER_THREAD_ID.store(thread_id, Ordering::Relaxed);
     let _ = ready.send(Ok(thread_id));
 
     run_message_loop(&mut window, on_toggle);
+    TRIGGER_THREAD_ID.store(0, Ordering::Relaxed);
 }
 
 fn run_message_loop(window: &mut TriggerWindow, on_toggle: impl Fn()) {
@@ -193,6 +257,12 @@ fn run_message_loop(window: &mut TriggerWindow, on_toggle: impl Fn()) {
 
         if window.is_toggle_request(&message) {
             on_toggle();
+            continue;
+        }
+
+        // Thread messages have no window, so they never reach `DispatchMessageW`.
+        if message.message == SET_WIN_KEY_MESSAGE {
+            window.set_win_key(message.wParam.0 != 0);
             continue;
         }
 
@@ -236,25 +306,17 @@ impl TriggerWindow {
         });
 
         let config = Config::load();
-        let keyboard_hook: Option<HHOOK> = if config.use_win_key {
-            // SAFETY: `keyboard_hook_proc` is a valid `WH_KEYBOARD_LL` procedure and this thread
-            // pumps messages in `run_message_loop` until `TriggerWindow` drops.
-            match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) } {
-                Ok(hook) => Some(hook),
-                Err(error) => {
-                    eprintln!("failed to install the Windows-key hook, falling back to Ctrl+Alt+Space: {error}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let keyboard_hook: Option<HHOOK> = if config.use_win_key { install_keyboard_hook() } else { None };
 
         let taskbar_hook: Option<TaskbarHookGuard> = if config.use_taskbar_hook {
             match crate::taskbar::install_taskbar_hook(hwnd, toggle_message) {
-                Ok(guard) => Some(guard),
+                Ok(guard) => {
+                    HookStatus::Active.store(&TASKBAR_HOOK);
+                    Some(guard)
+                }
                 Err(error) => {
                     eprintln!("failed to install Explorer taskbar hook: {error}");
+                    HookStatus::Failed.store(&TASKBAR_HOOK);
                     None
                 }
             }
@@ -287,11 +349,32 @@ impl TriggerWindow {
             match crate::taskbar::install_taskbar_hook(self.hwnd, self.toggle_message) {
                 Ok(guard) => {
                     self.taskbar_hook = Some(guard);
+                    HookStatus::Active.store(&TASKBAR_HOOK);
                 }
                 Err(error) => {
                     eprintln!("failed to re-install Explorer taskbar hook: {error}");
+                    HookStatus::Failed.store(&TASKBAR_HOOK);
                 }
             }
+        }
+    }
+
+    fn set_win_key(&mut self, enabled: bool) {
+        match (enabled, self.keyboard_hook) {
+            (true, None) => {
+                // A tap in progress when the hook was removed must not count.
+                HOOK_STATE.with(|cell| cell.set(HookState { chord: WinKeyChord::new(), ..cell.get() }));
+                self.keyboard_hook = install_keyboard_hook();
+            }
+            (false, Some(hook)) => {
+                // SAFETY: `hook` was installed on this thread by `install_keyboard_hook`.
+                if let Err(error) = unsafe { UnhookWindowsHookEx(hook) } {
+                    eprintln!("failed to remove the Windows-key hook: {error}");
+                }
+                self.keyboard_hook = None;
+                HookStatus::Off.store(&WIN_KEY_HOOK);
+            }
+            _ => {}
         }
     }
 
@@ -323,6 +406,23 @@ impl Drop for TriggerWindow {
             }
             let _ = UnregisterHotKey(Some(self.hwnd), DEV_HOTKEY_ID);
             let _ = DestroyWindow(self.hwnd);
+        }
+    }
+}
+
+/// Installs the Windows-key hook on the calling thread, which must pump messages until it is removed.
+fn install_keyboard_hook() -> Option<HHOOK> {
+    // SAFETY: `keyboard_hook_proc` is a valid `WH_KEYBOARD_LL` procedure and the trigger thread
+    // pumps messages in `run_message_loop` until `TriggerWindow` drops.
+    match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) } {
+        Ok(hook) => {
+            HookStatus::Active.store(&WIN_KEY_HOOK);
+            Some(hook)
+        }
+        Err(error) => {
+            eprintln!("failed to install the Windows-key hook, falling back to Ctrl+Alt+Space: {error}");
+            HookStatus::Failed.store(&WIN_KEY_HOOK);
+            None
         }
     }
 }

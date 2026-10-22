@@ -14,8 +14,14 @@
   - _Avoid_: popularity, usage score.
 - **Power Flyout**: The panel above the card's power button listing Lock, Sign out, Sleep, Restart and Shut down.
   - _Avoid_: shutdown menu, power menu.
-- **Card Anchor**: The user-configurable alignment preset (`middle-left` by default, `center`, `bottom-left`, `bottom-center`) that determines where the `640x720` Liquid-Glass Card sits within the active monitor's Fog Veil.
+- **Card Anchor**: One of nine alignment presets, chosen on a 3x3 grid (`top-left` through `bottom-right`, `middle-left` by default), that determines where the `640x720` Liquid-Glass Card sits within the active monitor's Fog Veil.
   - _Avoid_: window dock, screen gravity.
+- **Veil Mode**: How the area around the Liquid-Glass Card is drawn: the full Fog Veil (blurred and dimmed), Dim (the live desktop dimmed without blur) or Off (the card alone).
+  - _Avoid_: backdrop mode, blur toggle.
+- **Settings Page**: The view inside the Liquid-Glass Card, opened with the gear button or Ctrl+,, that replaces the app list with the card position, Veil Mode, blur strength, Meta key switch and Setup Audit.
+  - _Avoid_: settings window, preferences dialog.
+- **Setup Audit**: The per-item report of the desktop integration `rusty-start setup` manages (Meta key binding, KWin window rule, autostart), each installed, missing or in conflict, plus read-only hook status on Windows.
+  - _Avoid_: health check, diagnostics.
 - **Launch ID**: The platform identifier the host uses to launch an app and to key its pins and launch history: an AppUserModelID or known-folder path on Windows, a desktop file ID (`org.kde.konsole.desktop`) on Linux.
   - _Avoid_: app path, exe name, app ID.
 - **Plain Glass**: The Fog Veil and Liquid-Glass Card drawn without a desktop snapshot: a dimmed veil and a frosted, unrefracted card over the live desktop. Used when capture is refused, unavailable or takes longer than 100 ms.

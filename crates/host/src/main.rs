@@ -12,6 +12,7 @@ mod instance;
 mod menu;
 mod power;
 mod search;
+mod settings;
 mod setup;
 #[cfg(backend_win32)]
 mod taskbar;

@@ -1,0 +1,55 @@
+/// Text button in the card's glass style. `warning` tints it for a destructive second press.
+export component GlassButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <bool> warning;
+
+    callback clicked();
+
+    height: 32px;
+    min-width: label.preferred-width + 28px;
+    border-radius: 10px;
+    background: !root.enabled ? #ffffff08 : (touch.has-hover ? #ffffff2c : #ffffff16);
+    border-width: 1px;
+    border-color: focus.has-focus ? #9be2ffcc : (root.warning ? #ffd27a99 : (touch.has-hover ? #9be2ff77 : #ffffff30));
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        root.activate();
+    }
+
+    function activate() {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+
+    label := Text {
+        text: root.text;
+        color: !root.enabled ? #e4effe55 : (root.warning ? #ffd27a : #e4effe);
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) {
+                root.activate();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            focus.focus();
+            root.activate();
+        }
+    }
+}

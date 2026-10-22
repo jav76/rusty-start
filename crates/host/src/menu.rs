@@ -16,9 +16,10 @@ use crate::StartMenu;
 use crate::app_list::{Activation, AppList};
 use crate::apps::{self, App, IconPixels};
 use crate::backdrop::{self, MonitorRect};
-use crate::config::Config;
+use crate::config::{self, Config};
 use crate::glass::{self, GlassState};
 use crate::power::{self, PowerAction};
+use crate::settings;
 use crate::trigger::{self, MenuKey, MenuKeyAction, MenuWinKeyTap};
 use crate::usage::{self, Usage};
 
@@ -64,6 +65,7 @@ enum Phase {
 
 struct MenuController {
     config: Config,
+    config_writer: Option<config::Writer>,
     capturer: backdrop::Capturer,
     glass_state: Rc<RefCell<GlassState>>,
     monitor_rect: MonitorRect,
@@ -82,6 +84,9 @@ impl MenuController {
             backdrop::active_monitor_rect().unwrap_or(MonitorRect { x: 0, y: 0, width: 1440, height: 900 });
         Self {
             config: Config::load(),
+            config_writer: config::Writer::spawn()
+                .inspect_err(|error| eprintln!("settings changes will not be saved: {error:#}"))
+                .ok(),
             capturer: backdrop::Capturer::default(),
             glass_state: Rc::new(RefCell::new(GlassState::default())),
             monitor_rect,
@@ -107,9 +112,11 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
         let rect = controller.monitor_rect;
         backdrop::place_overlay_window(start_menu.window(), rect);
         apply_layout(start_menu, rect, controller.config, &controller.glass_state);
+        settings::show_config(start_menu, controller.config);
         set_progress(start_menu, &controller.glass_state, 0.0);
         glass::install_rendering_notifier(start_menu, Rc::clone(&controller.glass_state));
     });
+    settings::connect_callbacks(start_menu);
 
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
     start_menu.window().on_winit_window_event(move |_, event| {
@@ -121,7 +128,9 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
                 WIN_KEY_TAP.with(|cell| cell.set(MenuWinKeyTap::default()));
                 dismiss_on_deactivation(&start_menu);
             }
-            winit::event::WindowEvent::KeyboardInput { event, .. } if trigger::MENU_HANDLES_WIN_KEY => {
+            winit::event::WindowEvent::KeyboardInput { event, .. }
+                if trigger::MENU_HANDLES_WIN_KEY && config().use_win_key =>
+            {
                 handle_win_key(&start_menu, event);
             }
             winit::event::WindowEvent::Resized(size)
@@ -170,13 +179,6 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
                 .and_then(|index| CONTROLLER.with(|cell| cell.borrow().power_actions.get(index).copied()))
         {
             perform_power_action(&start_menu, action);
-        }
-    });
-
-    let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
-    start_menu.on_cycle_anchor(move || {
-        if let Some(start_menu) = weak_menu.upgrade() {
-            cycle_anchor(&start_menu);
         }
     });
 }
@@ -531,18 +533,33 @@ fn toggle_pin(start_menu: &StartMenu, row: i32) {
     }
 }
 
-fn cycle_anchor(start_menu: &StartMenu) {
-    CONTROLLER.with(|cell| {
-        let mut controller = cell.borrow_mut();
-        controller.config.card_anchor = controller.config.card_anchor.next();
-        apply_layout(start_menu, controller.monitor_rect, controller.config, &controller.glass_state);
+/// The configuration the menu is showing.
+pub fn config() -> Config {
+    CONTROLLER.with(|cell| cell.borrow().config)
+}
 
-        if let Err(error) = controller.config.save() {
-            eprintln!("failed to save config.toml: {error:#}");
+/// Applies `change` to the configuration, lays the menu out again and queues a save.
+pub fn update_config(start_menu: &StartMenu, change: impl FnOnce(&mut Config)) {
+    let changed: Option<Config> = CONTROLLER.with(|cell| {
+        let mut controller = cell.borrow_mut();
+        let mut config: Config = controller.config;
+        change(&mut config);
+        if config == controller.config {
+            return None;
         }
+
+        controller.config = config;
+        apply_layout(start_menu, controller.monitor_rect, config, &controller.glass_state);
+        if let Some(writer) = &controller.config_writer {
+            writer.save(config);
+        }
+        Some(config)
     });
 
-    start_menu.window().request_redraw();
+    if let Some(config) = changed {
+        settings::show_config(start_menu, config);
+        start_menu.window().request_redraw();
+    }
 }
 
 fn apply_layout(start_menu: &StartMenu, rect: MonitorRect, config: Config, glass_state: &Rc<RefCell<GlassState>>) {
@@ -555,7 +572,6 @@ fn apply_layout(start_menu: &StartMenu, rect: MonitorRect, config: Config, glass
     start_menu.set_monitor_height(logical_h);
     start_menu.set_card_x(card_x);
     start_menu.set_card_y(card_y);
-    start_menu.set_anchor_label(config.card_anchor.label().into());
 
     glass_state.borrow_mut().update_geometry(rect, scale, config);
 }

@@ -1,0 +1,269 @@
+import { AnchorPicker } from "anchor_picker.slint";
+import { GlassButton } from "glass_button.slint";
+import { GlassSegmented } from "glass_segmented.slint";
+import { GlassSlider } from "glass_slider.slint";
+import { GlassSwitch } from "glass_switch.slint";
+
+export enum SetupState {
+    installed,
+    missing,
+    conflict,
+    unavailable,
+}
+
+/// One line of the Setup Audit.
+export struct SetupRow {
+    label: string,
+    state: SetupState,
+    detail: string,
+}
+
+export struct SetupStatus {
+    summary: string,
+    rows: [SetupRow],
+    /// An audit, install or undo is running.
+    busy: bool,
+    /// Outcome of the last install or undo, or why it failed.
+    message: string,
+    can-install: bool,
+    can-undo: bool,
+}
+
+export struct MetaKeyStatus {
+    enabled: bool,
+    available: bool,
+    detail: string,
+}
+
+component SectionLabel inherits Text {
+    color: #9fb7d8;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+}
+
+/// Settings Page shown inside the Liquid-Glass Card in place of the app list. Every change applies
+/// at once; Rust saves it.
+export component SettingsPage inherits VerticalLayout {
+    in property <int> anchor-index;
+    in property <int> veil-mode;
+    in property <float> veil-blur;
+    in property <MetaKeyStatus> meta-key;
+    in property <SetupStatus> setup;
+    in property <string> meta-key-label: "Meta key opens Rusty Start";
+
+    callback choose-anchor(int);
+    callback choose-veil-mode(int);
+    callback set-veil-blur(float);
+    callback set-meta-key(bool);
+    callback install-setup();
+    callback undo-setup();
+
+    property <bool> confirming-undo: false;
+
+    spacing: 18px;
+    padding-left: 4px;
+    padding-right: 4px;
+
+    init => {
+        anchor-picker.focus();
+    }
+
+    HorizontalLayout {
+        spacing: 24px;
+
+        VerticalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            SectionLabel {
+                text: "POSITION";
+            }
+
+            anchor-picker := AnchorPicker {
+                selected: root.anchor-index;
+                choose(index) => {
+                    root.choose-anchor(index);
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 8px;
+            alignment: start;
+            horizontal-stretch: 1;
+
+            SectionLabel {
+                text: "BACKDROP";
+            }
+
+            GlassSegmented {
+                label: "Veil";
+                options: ["Fog Veil", "Dim", "Off"];
+                selected: root.veil-mode;
+                choose(index) => {
+                    root.choose-veil-mode(index);
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+                padding-top: 6px;
+
+                Text {
+                    text: "Blur";
+                    color: root.veil-mode == 0 ? #e4effe : #e4effe55;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+
+                GlassSlider {
+                    horizontal-stretch: 1;
+                    label: "Blur strength";
+                    enabled: root.veil-mode == 0;
+                    value: root.veil-blur;
+                    changed(value) => {
+                        root.set-veil-blur(value);
+                    }
+                }
+
+                Text {
+                    width: 36px;
+                    text: round(root.veil-blur) + "%";
+                    color: root.veil-mode == 0 ? #c8daf8 : #c8daf855;
+                    font-size: 13px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    VerticalLayout {
+        spacing: 8px;
+
+        SectionLabel {
+            text: "SHORTCUT";
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
+
+                Text {
+                    text: root.meta-key-label;
+                    color: root.meta-key.available ? #e4effe : #e4effe77;
+                    font-size: 14px;
+                }
+
+                if root.meta-key.detail != "": Text {
+                    text: root.meta-key.detail;
+                    color: #c8daf877;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+
+            GlassSwitch {
+                y: (parent.height - self.height) / 2;
+                label: root.meta-key-label;
+                checked: root.meta-key.enabled;
+                enabled: root.meta-key.available && !root.setup.busy;
+                toggled => {
+                    root.set-meta-key(!root.meta-key.enabled);
+                }
+            }
+        }
+    }
+
+    VerticalLayout {
+        spacing: 8px;
+        vertical-stretch: 1;
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            SectionLabel {
+                text: "SETUP";
+                vertical-alignment: center;
+            }
+
+            Text {
+                horizontal-stretch: 1;
+                text: root.setup.busy ? "Checking..." : root.setup.summary;
+                color: #e4effe;
+                font-size: 13px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            GlassButton {
+                text: "Install";
+                enabled: root.setup.can-install && !root.setup.busy;
+                clicked => {
+                    root.confirming-undo = false;
+                    root.install-setup();
+                }
+            }
+
+            GlassButton {
+                text: root.confirming-undo ? "Press again to undo" : "Undo";
+                warning: root.confirming-undo;
+                enabled: root.setup.can-undo && !root.setup.busy;
+                clicked => {
+                    if (root.confirming-undo) {
+                        root.confirming-undo = false;
+                        root.undo-setup();
+                    } else {
+                        root.confirming-undo = true;
+                    }
+                }
+            }
+        }
+
+        for row in root.setup.rows: HorizontalLayout {
+            spacing: 10px;
+            accessible-role: text;
+            accessible-label: row.label + ": " + row.detail;
+
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                background: row.state == SetupState.installed ? #6ee7a8
+                    : row.state == SetupState.conflict ? #ffd27a
+                    : row.state == SetupState.missing ? #ff8f8f
+                    : #c8daf855;
+            }
+
+            Text {
+                width: 150px;
+                text: row.label;
+                color: #e4effe;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+
+            Text {
+                horizontal-stretch: 1;
+                text: row.detail;
+                color: #c8daf8aa;
+                font-size: 12px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        if root.setup.message != "": Text {
+            text: root.setup.message;
+            color: #c8daf8aa;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+    }
+}

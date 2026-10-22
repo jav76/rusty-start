@@ -1,0 +1,64 @@
+/// Row of mutually exclusive options. Left and Right move the choice while it has focus.
+export component GlassSegmented inherits Rectangle {
+    in property <[string]> options;
+    in property <int> selected;
+    in property <string> label;
+
+    callback choose(int);
+
+    height: 36px;
+    border-radius: 12px;
+    background: #ffffff10;
+    border-width: 1px;
+    border-color: focus.has-focus ? #9be2ffcc : #ffffff26;
+    accessible-role: radio-group;
+    accessible-label: root.label;
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.LeftArrow && root.selected > 0) {
+                root.choose(root.selected - 1);
+                return accept;
+            }
+            if (event.text == Key.RightArrow && root.selected < root.options.length - 1) {
+                root.choose(root.selected + 1);
+                return accept;
+            }
+            reject
+        }
+    }
+
+    HorizontalLayout {
+        padding: 3px;
+        spacing: 3px;
+
+        for option[index] in root.options: Rectangle {
+            horizontal-stretch: 1;
+            border-radius: 9px;
+            background: index == root.selected ? #7cc8ff40 : (option-touch.has-hover ? #ffffff16 : transparent);
+            accessible-role: radio-button;
+            accessible-label: option;
+            accessible-checkable: true;
+            accessible-checked: index == root.selected;
+            accessible-action-default => {
+                root.choose(index);
+            }
+
+            Text {
+                text: option;
+                color: index == root.selected ? #ffffff : #c8daf8;
+                font-size: 13px;
+                font-weight: index == root.selected ? 600 : 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            option-touch := TouchArea {
+                clicked => {
+                    focus.focus();
+                    root.choose(index);
+                }
+            }
+        }
+    }
+}
