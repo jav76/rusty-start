@@ -6,6 +6,7 @@
 
 use std::env;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -57,6 +58,7 @@ pub fn apply(options: Options, changes: &mut Vec<String>) -> Result<()> {
             changes,
         )?;
     }
+    refresh_service_cache();
 
     if !options.from_host {
         changes.push("Done. Start the host with `rusty-start`; it also starts with your next session.".to_owned());
@@ -72,6 +74,7 @@ pub fn undo(options: Options, changes: &mut Vec<String>) -> Result<()> {
     }
     remove_marked_file(&autostart_entry_path()?, "autostart", changes)?;
     remove_marked_file(&development_entry_path()?, "the development desktop entry", changes)?;
+    refresh_service_cache();
     if !options.from_host {
         changes.push("Done. Stop a running host with `pkill -x rusty-start`.".to_owned());
     }
@@ -262,6 +265,20 @@ fn reconfigure_kwin() {
     });
     if let Err(error) = reloaded {
         eprintln!("{error:#}; the change applies after you log in again");
+    }
+}
+
+/// Rebuilds KDE's service cache (ksycoca), which KWin reads to authorize desktop snapshots by
+/// executable path. Without it, a rewritten desktop entry takes effect only after the cache rebuilds
+/// on its own, and the host opens as Plain Glass meanwhile. Not on KDE, the tool is simply missing.
+fn refresh_service_cache() {
+    match Command::new("kbuildsycoca6").output() {
+        Ok(output) if !output.status.success() => {
+            eprintln!("kbuildsycoca6 failed; desktop entry changes apply after you log in again");
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => eprintln!("failed to run kbuildsycoca6: {error}"),
     }
 }
 

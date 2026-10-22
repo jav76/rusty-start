@@ -61,6 +61,8 @@ export component SettingsPage inherits VerticalLayout {
 
     property <bool> confirming-undo: false;
 
+    // Spare height stays below the last section instead of spreading the sections apart.
+    alignment: start;
     spacing: 18px;
     padding-left: 4px;
     padding-right: 4px;
@@ -182,7 +184,6 @@ export component SettingsPage inherits VerticalLayout {
 
     VerticalLayout {
         spacing: 8px;
-        vertical-stretch: 1;
 
         HorizontalLayout {
             spacing: 8px;
