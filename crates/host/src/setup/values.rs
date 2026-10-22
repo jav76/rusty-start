@@ -4,6 +4,8 @@ use std::path::Path;
 
 use rusty_start_protocol::APP_ID;
 
+use super::ItemState;
+
 /// Key that marks files `rusty-start setup` wrote, so `--undo` never removes a user's own file.
 pub const SETUP_MARKER: &str = "X-RustyStart-Setup=true";
 
@@ -116,6 +118,19 @@ pub fn desktop_entry(executable: &Path, kind: EntryKind) -> String {
     )
 }
 
+/// Audits a desktop entry setup writes, given its current contents (`None` when it is missing) and
+/// the contents setup would write now.
+pub fn entry_state(existing: Option<&str>, expected: &str) -> (ItemState, &'static str) {
+    match existing {
+        None => (ItemState::Missing, "not installed"),
+        Some(contents) if contents == expected => (ItemState::Installed, "installed"),
+        Some(contents) if contents.lines().any(|line| line == SETUP_MARKER) => {
+            (ItemState::Conflict, "points at another build; Install updates it")
+        }
+        Some(_) => (ItemState::Conflict, "a file setup did not write is in the way"),
+    }
+}
+
 /// Quotes a program path for `Exec` when it contains characters the specification reserves.
 fn quote_exec(program: &str) -> String {
     let reserved = |character: char| character.is_whitespace() || "\"'\\><~|&;$*?#()`".contains(character);
@@ -193,6 +208,17 @@ mod tests {
         assert!(entry.contains("Exec=/usr/bin/rusty-start\n"));
         assert!(entry.contains("NoDisplay=true\n"));
         assert!(entry.contains(SETUP_MARKER));
+    }
+
+    #[test]
+    fn entries_are_audited_against_what_setup_would_write() {
+        let expected = desktop_entry(&PathBuf::from("/usr/bin/rusty-start"), EntryKind::Autostart);
+        let other_build = desktop_entry(&PathBuf::from("/home/me/rusty-start"), EntryKind::Autostart);
+
+        assert_eq!(entry_state(None, &expected).0, ItemState::Missing);
+        assert_eq!(entry_state(Some(&expected), &expected).0, ItemState::Installed);
+        assert_eq!(entry_state(Some(&other_build), &expected).0, ItemState::Conflict);
+        assert_eq!(entry_state(Some("[Desktop Entry]\nExec=mine\n"), &expected).0, ItemState::Conflict);
     }
 
     #[test]

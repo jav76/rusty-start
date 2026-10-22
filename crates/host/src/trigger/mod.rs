@@ -8,7 +8,7 @@
 #[cfg(backend_win32)]
 mod win32;
 #[cfg(backend_win32)]
-pub use win32::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, suppress_native_start_menu};
+pub use win32::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, set_win_key, status_items, suppress_native_start_menu};
 
 #[cfg(backend_linux)]
 mod linux;
@@ -16,12 +16,12 @@ mod linux;
 #[cfg(backend_linux)]
 pub use linux::serve_toggle_interface;
 #[cfg(backend_linux)]
-pub use linux::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, suppress_native_start_menu};
+pub use linux::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, set_win_key, status_items, suppress_native_start_menu};
 
 #[cfg(backend_preview)]
 mod preview;
 #[cfg(backend_preview)]
-pub use preview::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, suppress_native_start_menu};
+pub use preview::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, set_win_key, status_items, suppress_native_start_menu};
 
 /// A key event seen by the menu window while it has keyboard focus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

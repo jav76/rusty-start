@@ -1,0 +1,59 @@
+/// On/off switch. Rust owns `checked`; the switch only reports that it was toggled.
+export component GlassSwitch inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    in property <string> label;
+
+    callback toggled();
+
+    width: 44px;
+    height: 26px;
+    border-radius: self.height / 2;
+    background: !root.enabled ? #ffffff0c : (root.checked ? #7cc8ff66 : #ffffff1a);
+    border-width: 1px;
+    border-color: focus.has-focus ? #9be2ffcc : (touch.has-hover && root.enabled ? #9be2ff77 : #ffffff30);
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        root.activate();
+    }
+
+    function activate() {
+        if (root.enabled) {
+            root.toggled();
+        }
+    }
+
+    knob := Rectangle {
+        x: root.checked ? parent.width - self.width - 4px : 4px;
+        y: (parent.height - self.height) / 2;
+        width: 18px;
+        height: 18px;
+        border-radius: self.height / 2;
+        background: root.enabled ? (root.checked ? #f6f9ff : #c8daf8) : #c8daf844;
+
+        animate x { duration: 120ms; easing: ease-out; }
+    }
+
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) {
+                root.activate();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            focus.focus();
+            root.activate();
+        }
+    }
+}

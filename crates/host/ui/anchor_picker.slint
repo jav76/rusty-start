@@ -1,0 +1,89 @@
+/// 3x3 grid choosing the Card Anchor. Cells are row-major from the top-left, matching
+/// `CardAnchor::ALL`. Arrow keys move the choice while the grid has focus.
+export component AnchorPicker inherits Rectangle {
+    in property <int> selected;
+
+    callback choose(int);
+
+    property <[string]> labels: [
+        "Top left", "Top center", "Top right",
+        "Middle left", "Center", "Middle right",
+        "Bottom left", "Bottom center", "Bottom right",
+    ];
+    property <length> cell-width: 44px;
+    property <length> cell-height: 28px;
+    property <length> gap: 4px;
+
+    width: 3 * root.cell-width + 2 * root.gap + 8px;
+    height: 3 * root.cell-height + 2 * root.gap + 8px;
+    border-radius: 12px;
+    background: #ffffff10;
+    border-width: 1px;
+    border-color: focus.has-focus ? #9be2ffcc : #ffffff26;
+    accessible-role: radio-group;
+    accessible-label: "Menu position";
+    forward-focus: focus;
+
+    function move(columns: int, rows: int) {
+        let column = clamp(mod(root.selected, 3) + columns, 0, 2);
+        let row = clamp(floor(root.selected / 3) + rows, 0, 2);
+        if (row * 3 + column != root.selected) {
+            root.choose(row * 3 + column);
+        }
+    }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.LeftArrow) {
+                root.move(-1, 0);
+                return accept;
+            }
+            if (event.text == Key.RightArrow) {
+                root.move(1, 0);
+                return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                root.move(0, -1);
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.move(0, 1);
+                return accept;
+            }
+            reject
+        }
+    }
+
+    for label[index] in root.labels: Rectangle {
+        x: 4px + mod(index, 3) * (root.cell-width + root.gap);
+        y: 4px + floor(index / 3) * (root.cell-height + root.gap);
+        width: root.cell-width;
+        height: root.cell-height;
+        border-radius: 7px;
+        background: index == root.selected ? #7cc8ff55 : (cell-touch.has-hover ? #ffffff1c : #ffffff0a);
+        border-width: index == root.selected ? 1px : 0px;
+        border-color: #aee6ff99;
+        accessible-role: radio-button;
+        accessible-label: label;
+        accessible-checkable: true;
+        accessible-checked: index == root.selected;
+        accessible-action-default => {
+            root.choose(index);
+        }
+
+        // A miniature card shows where the menu lands.
+        Rectangle {
+            width: 10px;
+            height: 12px;
+            border-radius: 2px;
+            background: index == root.selected ? #f6f9ff : #c8daf855;
+        }
+
+        cell-touch := TouchArea {
+            clicked => {
+                focus.focus();
+                root.choose(index);
+            }
+        }
+    }
+}

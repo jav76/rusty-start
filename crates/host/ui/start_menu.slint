@@ -1,9 +1,16 @@
 import { ListView } from "std-widgets.slint";
+import { GearGlyph } from "gear_glyph.slint";
 import { MenuRow, MenuRowView, RowKind } from "menu_row.slint";
 import { PowerFlyout } from "power_flyout.slint";
 import { PowerGlyph } from "power_glyph.slint";
+import { MetaKeyStatus, SettingsPage, SetupRow, SetupState, SetupStatus } from "settings_page.slint";
 
-export { MenuRow, RowKind }
+export { MenuRow, MetaKeyStatus, RowKind, SetupRow, SetupState, SetupStatus }
+
+export enum Page {
+    apps,
+    settings,
+}
 
 export component StartMenu inherits Window {
     in-out property <string> query;
@@ -20,23 +27,52 @@ export component StartMenu inherits Window {
     in property <float> progress: 0.0;
     // Same cubic-out curve the glass shader applies, so the card content moves with the glass body.
     property <float> ease: 1.0 - (1.0 - root.progress) * (1.0 - root.progress) * (1.0 - root.progress);
-    in property <string> anchor-label: "Middle Left";
+    in-out property <Page> page: Page.apps;
+
+    in property <int> anchor-index;
+    in property <int> veil-mode;
+    in property <float> veil-blur;
+    in property <MetaKeyStatus> meta-key;
+    in property <string> meta-key-label;
+    in property <SetupStatus> setup;
 
     callback dismiss();
     callback search(string);
     callback launch(int);
     callback toggle-pin(int);
     callback power(int);
-    callback cycle-anchor();
+    callback open-settings();
+    callback choose-anchor(int);
+    callback choose-veil-mode(int);
+    callback set-veil-blur(float);
+    callback set-meta-key(bool);
+    callback install-setup();
+    callback undo-setup();
 
-    /// Clears the query, restores the full list and scrolls back to the top.
+    /// Returns to the app list, clears the query, restores the full list and scrolls back to the top.
     public function reset-search() {
+        root.page = Page.apps;
         root.query = "";
         root.search("");
         root.power-open = false;
         list.content-y = 0px;
         root.select(0, 1);
         search-input.focus();
+    }
+
+    function show-apps() {
+        root.page = Page.apps;
+        search-input.focus();
+    }
+
+    function toggle-settings() {
+        root.power-open = false;
+        if (root.page == Page.settings) {
+            root.show-apps();
+        } else {
+            root.page = Page.settings;
+            root.open-settings();
+        }
     }
 
     public function focus-search() {
@@ -95,10 +131,19 @@ export component StartMenu inherits Window {
             if (event.text == Key.Escape) {
                 if (root.power-open) {
                     root.power-open = false;
+                } else if (root.page == Page.settings) {
+                    root.show-apps();
                 } else {
                     root.dismiss();
                 }
                 return accept;
+            }
+            if (event.modifiers.control && event.text == ",") {
+                root.toggle-settings();
+                return accept;
+            }
+            if (root.page != Page.apps) {
+                return reject;
             }
             if (event.text == Key.DownArrow) {
                 root.select(root.selected-index + 1, 1);
@@ -153,10 +198,15 @@ export component StartMenu inherits Window {
                     height: 48px;
                     spacing: 12px;
 
-                    // Translucent glass search capsule.
                     Rectangle {
                         horizontal-stretch: 1;
                         height: 48px;
+
+                    // Translucent glass search capsule.
+                    Rectangle {
+                        width: 100%;
+                        height: 100%;
+                        visible: root.page == Page.apps;
                         border-radius: 16px;
                         background: search-input.has-focus ? #ffffff22 : #ffffff16;
                         border-width: 1px;
@@ -190,6 +240,7 @@ export component StartMenu inherits Window {
                                 search-input := TextInput {
                                     width: 100%;
                                     height: 100%;
+                                    enabled: root.page == Page.apps;
                                     text <=> root.query;
                                     color: #f6f9ff;
                                     font-size: 16px;
@@ -208,49 +259,87 @@ export component StartMenu inherits Window {
                         }
                     }
 
-                    // Subtle glass pill to cycle the card anchor position on screen.
-                    Rectangle {
-                        width: 132px;
-                        height: 48px;
-                        border-radius: 16px;
-                        background: anchor-touch.has-hover ? #ffffff2c : #ffffff16;
-                        border-width: 1px;
-                        border-color: anchor-touch.has-hover ? #9be2ff77 : #ffffff30;
+                    if root.page == Page.settings: HorizontalLayout {
+                        spacing: 10px;
 
-                        HorizontalLayout {
-                            padding-left: 12px;
-                            padding-right: 12px;
-                            spacing: 6px;
-                            alignment: center;
-
-                            Text {
-                                text: "⌖";
-                                color: #9be2ff;
-                                font-size: 14px;
-                                vertical-alignment: center;
+                        Rectangle {
+                            width: 40px;
+                            height: 40px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 12px;
+                            background: back-touch.has-hover ? #ffffff22 : transparent;
+                            accessible-role: button;
+                            accessible-label: "Back to apps";
+                            accessible-action-default => {
+                                root.show-apps();
                             }
 
-                            Text {
-                                text: root.anchor-label;
-                                color: #e4effe;
-                                font-size: 12px;
-                                font-weight: 600;
-                                vertical-alignment: center;
+                            Path {
+                                width: 18px;
+                                height: 18px;
+                                viewbox-width: 24;
+                                viewbox-height: 24;
+                                commands: "M 15 5 L 8 12 L 15 19";
+                                stroke: #b8d4ff;
+                                stroke-width: 2px;
+                                stroke-line-cap: round;
+                                stroke-line-join: round;
+                                fill: transparent;
+                            }
+
+                            back-touch := TouchArea {
+                                clicked => {
+                                    root.show-apps();
+                                }
                             }
                         }
 
-                        anchor-touch := TouchArea {
+                        Text {
+                            horizontal-stretch: 1;
+                            text: "Settings";
+                            color: #f6f9ff;
+                            font-size: 18px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                    }
+
+                    Rectangle {
+                        width: 48px;
+                        height: 48px;
+                        border-radius: 16px;
+                        background: root.page == Page.settings ? #ffffff2c : (gear-touch.has-hover ? #ffffff22 : #ffffff16);
+                        border-width: 1px;
+                        border-color: gear-touch.has-hover || root.page == Page.settings ? #9be2ff77 : #ffffff30;
+                        accessible-role: button;
+                        accessible-label: "Settings";
+                        accessible-action-default => {
+                            root.toggle-settings();
+                        }
+
+                        GearGlyph {
+                            width: 22px;
+                            height: 22px;
+                            tint: root.page == Page.settings ? #9be2ff : #b8d4ff;
+                        }
+
+                        gear-touch := TouchArea {
                             clicked => {
-                                root.cycle-anchor();
-                                search-input.focus();
+                                root.toggle-settings();
                             }
                         }
                     }
                 }
 
+                Rectangle {
+                    vertical-stretch: 1;
+
                 // Virtualized translucent glass app list.
                 list := ListView {
-                    vertical-stretch: 1;
+                    width: 100%;
+                    height: 100%;
+                    visible: root.page == Page.apps;
 
                     for item[index] in root.rows: MenuRowView {
                         height: root.row-height;
@@ -267,13 +356,43 @@ export component StartMenu inherits Window {
                     }
                 }
 
+                if root.page == Page.settings: SettingsPage {
+                    width: 100%;
+                    height: 100%;
+                    anchor-index: root.anchor-index;
+                    veil-mode: root.veil-mode;
+                    veil-blur: root.veil-blur;
+                    meta-key: root.meta-key;
+                    meta-key-label: root.meta-key-label;
+                    setup: root.setup;
+                    choose-anchor(index) => {
+                        root.choose-anchor(index);
+                    }
+                    choose-veil-mode(index) => {
+                        root.choose-veil-mode(index);
+                    }
+                    set-veil-blur(value) => {
+                        root.set-veil-blur(value);
+                    }
+                    set-meta-key(enabled) => {
+                        root.set-meta-key(enabled);
+                    }
+                    install-setup => {
+                        root.install-setup();
+                    }
+                    undo-setup => {
+                        root.undo-setup();
+                    }
+                }
+                }
+
                 HorizontalLayout {
                     height: 40px;
                     spacing: 12px;
 
                     Text {
                         horizontal-stretch: 1;
-                        text: "Ctrl+P pins the selected app";
+                        text: root.page == Page.settings ? "Esc returns to apps" : "Ctrl+P pins the selected app";
                         color: #c8daf877;
                         font-size: 12px;
                         vertical-alignment: center;
@@ -301,7 +420,9 @@ export component StartMenu inherits Window {
                         power-touch := TouchArea {
                             clicked => {
                                 root.power-open = !root.power-open;
-                                search-input.focus();
+                                if (root.page == Page.apps) {
+                                    search-input.focus();
+                                }
                             }
                         }
                     }

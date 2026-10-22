@@ -83,6 +83,12 @@ Releases ship a `.zip` for x64 and arm64 (Windows on ARM). Extract it anywhere a
 taskbar hook from there, and keeps running without it. The binaries are not code-signed, so
 SmartScreen may ask before the first run.
 
+To start Rusty Start at sign-in, open **Settings > Setup** in the menu and choose **Install**, or run
+`rusty-start setup`. It adds a `RustyStart` value under
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` that points at the running executable;
+**Undo** or `rusty-start setup --undo` removes it. If you move the folder later, the Setup section
+reports the value as pointing at another copy, and Install updates it.
+
 ## Installing on Linux
 
 Releases ship a `.deb` and a `.tar.gz` for amd64 and arm64. The package installs `/usr/bin/rusty-start`,
@@ -103,8 +109,10 @@ rusty-start
 - adds an autostart entry, and reloads KWin.
 
 `rusty-start setup --undo` reverses all of it and gives the Meta key back to the Application
-Launcher. On other desktops, bind a keyboard shortcut to `rusty-start` instead: a second launch
-toggles the menu.
+Launcher. `rusty-start setup --check` prints the Setup Audit: whether each piece is installed,
+missing or in conflict. The **Setup** section of the in-menu Settings Page shows the same audit and
+runs Install and Undo (Undo asks for a second press). On other desktops, bind a keyboard shortcut to
+`rusty-start` instead: a second launch toggles the menu.
 
 Running from a build directory (`cargo run`), add `--dev`: `rusty-start setup --dev` also installs a
 hidden desktop entry for the current executable. KWin only shares desktop snapshots with executables
@@ -120,7 +128,9 @@ listed in an installed desktop entry; without one the menu opens as Plain Glass.
 | Launch                            | Enter, or click a row                                           |
 | Pin or unpin the selected app     | Ctrl+P, or the pin button on a row                              |
 | Power options                     | Power button in the bottom-right corner, or search for them     |
-| Change the card position          | Anchor pill in the top-right corner                             |
+| Open or close the Settings Page   | Ctrl+, or the gear button in the top-right corner               |
+| Move between settings             | Tab and Shift+Tab; arrow keys change the focused setting        |
+| Back to the app list              | Escape on the Settings Page, or the back arrow                  |
 | Close                             | Escape, a click outside the card, or switching to another app   |
 
 - Windows shortcuts such as Win+R, Win+E and Win+Shift+S work as usual, with the menu open or closed.
@@ -128,6 +138,10 @@ listed in an installed desktop entry; without one the menu opens as Plain Glass.
   working because KWin only calls Rusty Start for a Meta tap on its own.
 - With an empty search the list shows **Pinned** apps, up to five **Recent** apps, then **All apps**.
   Search results rank apps you launch often and recently above others that match equally well.
+- The Settings Page applies each change at once and saves it to `config.toml`: the card position
+  (a 3x3 grid), the Veil Mode, the Fog Veil blur strength, whether the Meta (Windows) key opens the
+  menu, and setup. On Plasma the Meta switch moves the key between Rusty Start and the Application
+  Launcher, as setup does.
 - Power actions found by search (for example `lock` or `shutdown`) are listed below the app results.
   Sign out, Restart and Shut down run only when selected a second time.
 - The app list refreshes in the background when apps are installed or removed, and the new list
@@ -143,13 +157,15 @@ Linux):
 
 | Key                | Values                                                              | Default         |
 | ------------------ | ------------------------------------------------------------------- | --------------- |
-| `card_anchor`      | `middle-left`, `center`, `bottom-left`, `bottom-center`             | `middle-left`   |
+| `card_anchor`      | `top-left`, `top-center`, `top-right`, `middle-left`, `center`, `middle-right`, `bottom-left`, `bottom-center`, `bottom-right` | `middle-left` |
 | `edge_margin`      | Inset from the screen edge in logical pixels, `0` to `512`          | `48`            |
+| `veil_mode`        | `fog` (blurred and dimmed), `dim` (dimmed only), `off` (card only)   | `fog`           |
+| `veil_blur`        | Fog Veil blur strength, `0` to `100`                                | `100`           |
 | `use_win_key`      | `true` or `false`: open the menu with the Windows key (Windows only) | `true`          |
 | `use_taskbar_hook` | `true` or `false`: install the explorer taskbar hook (Windows only) | `true`          |
 
-On Linux the Meta key binding belongs to the desktop, so `use_win_key` has no effect there; use
-`rusty-start setup` or `rusty-start setup --undo` instead.
+On Linux the Meta key binding belongs to the desktop, so `use_win_key` has no effect there; use the
+Settings Page switch, `rusty-start setup` or `rusty-start setup --undo` instead.
 
 Pins and launch history are saved to `usage.tsv` in the same folder.
 

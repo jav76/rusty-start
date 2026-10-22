@@ -19,6 +19,7 @@ use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::OwnedObjectPath;
 
 use crate::dbus;
+use crate::setup::SetupItem;
 
 /// The desktop sees the Meta key even while the menu has keyboard focus and toggles the menu, so a
 /// tap handled in the window as well would close the menu and reopen it at once.
@@ -34,6 +35,14 @@ struct Handler {
 
 /// The compositor owns the Meta key, so there is nothing to suppress.
 pub fn suppress_native_start_menu() {}
+
+/// The Meta key binding belongs to the desktop and changes through setup, not `use_win_key`.
+pub fn set_win_key(_enabled: bool) {}
+
+/// The host installs no hooks on Linux; its desktop integration is all in the Setup Audit.
+pub fn status_items() -> Vec<SetupItem> {
+    Vec::new()
+}
 
 /// Stops handling toggles when dropped.
 pub struct TriggerGuard {
