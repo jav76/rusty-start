@@ -721,6 +721,10 @@ uniform float u_veil_blur;
 const float PLAIN_VEIL_OPACITY = 0.55;
 const float PLAIN_CARD_OPACITY = 0.92;
 const vec3 PLAIN_GLASS_BASE = vec3(0.07, 0.09, 0.15);
+// Fog Veil blur ladder position at full `u_veil_blur`. Past it only the fog and deep levels blend,
+// and both are upsampled from the same 1/8 level, so they look alike. Capping here spreads the
+// visible change across the whole slider.
+const float VISIBLE_BLUR_CEILING = 0.7;
 
 float sd_rounded_box(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + vec2(r);
@@ -754,7 +758,7 @@ void main() {
     vec3 fog_mid = texture(u_blur_fog, v_uv).rgb;
     vec3 fog_deep = texture(u_blur_deep, v_uv).rgb;
 
-    float blur_ease = ease * clamp(u_veil_blur, 0.0, 1.0);
+    float blur_ease = ease * clamp(u_veil_blur, 0.0, 1.0) * VISIBLE_BLUR_CEILING;
     vec3 outer_fog = mix(sharp, fog_mild, smoothstep(0.0, 0.35, blur_ease));
     outer_fog = mix(outer_fog, fog_mid, smoothstep(0.2, 0.7, blur_ease));
     outer_fog = mix(outer_fog, fog_deep, smoothstep(0.5, 1.0, blur_ease) * 0.72);
