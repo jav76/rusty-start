@@ -191,7 +191,6 @@ pub struct Config {
     /// Fog Veil blur strength from 0 (dim only) to `MAX_VEIL_BLUR`.
     pub veil_blur: u8,
     pub use_win_key: bool,
-    pub use_taskbar_hook: bool,
 }
 
 impl Default for Config {
@@ -202,7 +201,6 @@ impl Default for Config {
             veil_mode: VeilMode::Fog,
             veil_blur: MAX_VEIL_BLUR,
             use_win_key: true,
-            use_taskbar_hook: true,
         }
     }
 }
@@ -264,11 +262,6 @@ impl Config {
                         config.use_win_key = enabled;
                     }
                 }
-                "use_taskbar_hook" => {
-                    if let Some(enabled) = parse_bool(value) {
-                        config.use_taskbar_hook = enabled;
-                    }
-                }
                 _ => {}
             }
         }
@@ -287,14 +280,12 @@ impl Config {
              veil_mode = \"{}\"\n\
              # Fog Veil blur strength from 0 to 100\n\
              veil_blur = {}\n\
-             use_win_key = {}\n\
-             use_taskbar_hook = {}\n",
+             use_win_key = {}\n",
             self.card_anchor.as_key(),
             self.edge_margin as u32,
             self.veil_mode.as_key(),
             self.veil_blur,
             self.use_win_key,
-            self.use_taskbar_hook,
         )
     }
 }
@@ -421,7 +412,6 @@ mod tests {
         assert_eq!(config.veil_mode, VeilMode::Fog);
         assert_eq!(config.veil_blur, MAX_VEIL_BLUR);
         assert!(config.use_win_key);
-        assert!(config.use_taskbar_hook);
     }
 
     #[test]
@@ -480,11 +470,17 @@ mod tests {
             veil_mode: VeilMode::Dim,
             veil_blur: 35,
             use_win_key: false,
-            use_taskbar_hook: false,
         };
         let parsed = Config::parse_toml(&original.to_toml());
 
         assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn keys_from_older_versions_are_ignored() {
+        let config = Config::parse_toml("use_taskbar_hook = false\nveil_blur = 40\n");
+
+        assert_eq!(config, Config { veil_blur: 40, ..Config::default() });
     }
 
     #[test]

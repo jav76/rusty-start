@@ -1,5 +1,5 @@
-//! Windows setup: an autostart value under the user's `Run` key. The Windows key and taskbar
-//! hooks need no setup; the trigger reports their state while the host runs.
+//! Windows setup: an autostart value under the user's `Run` key. The Windows-key hook needs no
+//! setup; the trigger reports its state while the host runs.
 
 use std::env;
 use std::iter;

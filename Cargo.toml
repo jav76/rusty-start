@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/host", "crates/protocol", "crates/hook"]
+members = ["crates/host", "crates/protocol"]
 
 [workspace.package]
 version = "0.1.0"
@@ -69,8 +69,6 @@ must_use_candidate = "allow"
 needless_raw_string_hashes = "allow"
 similar_names = "allow"
 
-# Do not set `panic = "abort"` here. Profiles apply to every crate in the workspace, and the
-# future explorer hook DLL relies on unwinding so `catch_unwind` can keep panics out of explorer.
 [profile.release]
 lto = "fat"
 codegen-units = 1

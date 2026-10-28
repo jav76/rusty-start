@@ -108,12 +108,10 @@ jobs:
       - name: Install cargo-xwin
         run: cargo install cargo-xwin --version "$CARGO_XWIN_VERSION" --locked
 
-      # The workspace build includes the explorer hook DLL, which must match the architecture of
-      # explorer.exe, so each architecture ships its own.
       - name: Build
         env:
-          # Links the C runtime statically, so neither the zip nor the hook DLL inside explorer.exe
-          # depends on the Visual C++ Redistributable (VCRUNTIME140.dll) being installed.
+          # Links the C runtime statically, so the executable does not depend on the Visual C++
+          # Redistributable (VCRUNTIME140.dll) being installed.
           RUSTFLAGS: -C target-feature=+crt-static
         run: cargo xwin build --workspace --release --locked --target ${{ matrix.target }}
 
@@ -121,8 +119,7 @@ jobs:
         run: |
           staging="rusty-start-${GITHUB_REF_NAME}-windows-${{ matrix.arch }}"
           mkdir -p "target/dist/$staging"
-          cp target/${{ matrix.target }}/release/rusty-start.exe target/${{ matrix.target }}/release/rusty_start_hook.dll \
-            README.md LICENSE "target/dist/$staging/"
+          cp target/${{ matrix.target }}/release/rusty-start.exe README.md LICENSE "target/dist/$staging/"
           (cd target/dist && zip -r "$staging.zip" "$staging")
 
       - name: Publish
