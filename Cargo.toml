@@ -75,3 +75,10 @@ similar_names = "allow"
 lto = "fat"
 codegen-units = 1
 strip = true
+
+# Release optimizations without the slow link-time steps, for the latency budget test in CI.
+[profile.budget]
+inherits = "release"
+lto = false
+codegen-units = 16
+strip = false

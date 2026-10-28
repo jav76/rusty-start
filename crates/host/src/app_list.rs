@@ -322,9 +322,16 @@ impl Model for AppList {
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+
     use super::*;
 
     const NOW: u64 = 1_800_000_000;
+
+    /// Longest an optimized build may take to rebuild the rows for one keystroke.
+    const KEYSTROKE_BUDGET: Duration = Duration::from_millis(1);
+    const BUDGET_APP_COUNT: usize = 1_000;
 
     fn catalog(names: &[&str]) -> Catalog {
         let mut catalog = Catalog::new();
@@ -437,5 +444,79 @@ mod tests {
         let paint: usize = catalog.positions["Paint"];
 
         assert_eq!(row_after_toggle(&rows, paint, Section::Recent), Some(1));
+    }
+
+    /// Names like "Contoso Photo Studio 3", with pins and launch history, so queries reach every
+    /// match quality and the frecency lookups.
+    fn synthetic_catalog(app_count: usize) -> Catalog {
+        const VENDORS: [&str; 8] =
+            ["Microsoft", "Contoso", "Fabrikam", "Adobe", "Mozilla", "Northwind", "Tailspin", "Litware"];
+        const PRODUCTS: [&str; 16] = [
+            "Edge",
+            "Photo Studio",
+            "Terminal",
+            "Code",
+            "Mail",
+            "Calendar",
+            "Paint",
+            "Notes",
+            "Music Player",
+            "Video Editor",
+            "PowerShell",
+            "Calculator",
+            "Remote Desktop",
+            "Spreadsheet",
+            "Docs",
+            "Backup Tool",
+        ];
+
+        let names: Vec<String> = (0..app_count)
+            .map(|index| {
+                let vendor: &str = VENDORS[index % VENDORS.len()];
+                let product: &str = PRODUCTS[(index / VENDORS.len()) % PRODUCTS.len()];
+                let edition: usize = index / (VENDORS.len() * PRODUCTS.len()) + 1;
+                format!("{vendor} {product} {edition}")
+            })
+            .collect();
+        let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut catalog = catalog(&name_refs);
+        for name in names.iter().step_by(97) {
+            catalog.usage.toggle_pin(name);
+        }
+        for (offset, name) in names.iter().step_by(5).enumerate() {
+            catalog.usage.record_launch(name, NOW - offset as u64 * 3_600);
+        }
+        catalog
+    }
+
+    /// Median of repeated runs, so one run the scheduler preempted cannot fail the budget.
+    fn median_duration(mut run: impl FnMut()) -> Duration {
+        let mut samples: Vec<Duration> = (0..31)
+            .map(|_| {
+                let started_at: Instant = Instant::now();
+                run();
+                started_at.elapsed()
+            })
+            .collect();
+        samples.sort_unstable();
+        samples[samples.len() / 2]
+    }
+
+    #[test]
+    #[ignore = "timing test for optimized builds: cargo test -p rusty-start-host --profile budget -- --ignored"]
+    fn rows_for_each_keystroke_stay_within_the_latency_budget() {
+        let catalog = synthetic_catalog(BUDGET_APP_COUNT);
+        let keystrokes = ["", "m", "mi", "mic", "micro", "microsoft", "microsoft e", "ps", "photo st", "o", "zzz"];
+
+        let (slowest_query, slowest): (&str, Duration) = keystrokes
+            .into_iter()
+            .map(|query| (query, median_duration(|| drop(black_box(catalog.rows(query, NOW))))))
+            .max_by_key(|&(_, duration)| duration)
+            .expect("the keystroke list is not empty");
+
+        assert!(
+            slowest < KEYSTROKE_BUDGET,
+            "rows for {slowest_query:?} over {BUDGET_APP_COUNT} apps took {slowest:?}, over the {KEYSTROKE_BUDGET:?} budget"
+        );
     }
 }

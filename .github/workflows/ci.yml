@@ -57,3 +57,7 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --locked
+
+      # Timing needs optimized code, so the budget test is ignored by the debug run above.
+      - name: Latency budget
+        run: cargo test -p rusty-start-host --profile budget --locked -- --ignored

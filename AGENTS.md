@@ -16,6 +16,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo clippy -p rusty-start-host --all-targets --locked --features preview -- -D warnings
 cargo test --workspace --locked
+cargo test -p rusty-start-host --profile budget --locked -- --ignored
 ```
 
 - `cargo run -p rusty-start-host` runs the host. Add `--features preview` to run the preview
@@ -153,9 +154,15 @@ This project exists to be faster than the built-in Start menu. Treat latency as 
 
 - The path from trigger to first rendered frame does no disk I/O, shell enumeration or
   allocation proportional to installed apps. Precompute off the UI thread and reuse buffers.
-- Per-keystroke work is bounded by the app count with no I/O.
-- When a change touches the open/close path or rendering, state the before/after measurement or
-  observation in the PR.
+- Per-keystroke work is bounded by the app count with no I/O. Rebuilding the rows for one
+  keystroke stays under 1 ms at 1,000 apps in an optimized build. The ignored budget test in
+  `app_list.rs` enforces it in CI (`--profile budget -- --ignored`).
+- When a change touches the open/close path, search or rendering, state before/after numbers in
+  the PR from a build run with `RUSTY_START_TRACE_OPEN` set (debug builds always trace):
+  - The first visible frame lands at or under 75 ms after the trigger on the 3440x1440 Plasma
+    desktop. The 100 ms Plain Glass cutoff is the hard limit.
+  - Each search frame lands within 16 ms of the keystroke.
+  - Open-path changes are also checked on two monitors with different scale factors.
 
 ## Testing
 
