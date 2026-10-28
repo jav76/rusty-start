@@ -192,7 +192,13 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo clippy -p rusty-start-host --all-targets --locked --features preview -- -D warnings
 cargo test --workspace --locked
+cargo test -p rusty-start-host --profile budget --locked -- --ignored
 ```
+
+The last command is the per-keystroke latency budget: rebuilding the menu rows for 1,000 apps must
+take under 1 ms in an optimized build. Run the host with `RUSTY_START_TRACE_OPEN=1` (debug builds
+always do) to log the time to the first visible frame and from each keystroke to the frame that
+shows its results.
 
 `--features preview` builds the preview backend on any OS: the menu opens once at startup over a
 synthetic desktop backdrop with a fixed sample app list, so the Liquid-Glass shaders and UI can be

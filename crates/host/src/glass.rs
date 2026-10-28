@@ -23,6 +23,7 @@ use slint::{ComponentHandle, GraphicsAPI, RenderingState};
 use crate::StartMenu;
 use crate::backdrop::{self, MonitorRect, MonitorSnapshot};
 use crate::config::{CARD_HEIGHT, CARD_WIDTH, Config, MAX_VEIL_BLUR};
+use crate::trace;
 
 /// Shared parameters updated by `menu.rs` on the UI thread and consumed by the OpenGL underlay
 /// callback during `RenderingState::BeforeRendering`.
@@ -84,7 +85,7 @@ pub fn compute_card_rect_px(logical_x: f32, logical_y: f32, scale_factor: f32) -
 }
 
 fn log_first_visible_frame(state: &mut GlassState) {
-    if (cfg!(debug_assertions) || std::env::var_os("RUSTY_START_TRACE_OPEN").is_some())
+    if trace::enabled()
         && state.progress > 0.0
         && let Some(shown_at) = state.shown_at.take()
     {
@@ -139,7 +140,7 @@ pub fn install_rendering_notifier(start_menu: &StartMenu, state: Rc<RefCell<Glas
                     log_first_visible_frame(&mut borrowed);
                 }
             }
-            RenderingState::AfterRendering => {}
+            RenderingState::AfterRendering => trace::frame_rendered(),
             RenderingState::RenderingTeardown => {
                 if let Some(old_renderer) = renderer.take() {
                     old_renderer.destroy();

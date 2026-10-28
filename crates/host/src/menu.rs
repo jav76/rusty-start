@@ -20,6 +20,7 @@ use crate::config::{self, Config};
 use crate::glass::{self, GlassState};
 use crate::power::{self, PowerAction};
 use crate::settings;
+use crate::trace;
 use crate::trigger::{self, MenuKey, MenuKeyAction, MenuWinKeyTap};
 use crate::usage::{self, Usage};
 
@@ -153,6 +154,7 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
     start_menu.on_search(move |query| {
         if let Some(start_menu) = weak_menu.upgrade() {
+            trace::search_changed();
             AppList::with(&start_menu, |app_list| app_list.filter(&query));
         }
     });
@@ -391,7 +393,7 @@ fn show(start_menu: &StartMenu) {
         apply_layout(start_menu, rect, controller.config, &controller.glass_state);
 
         set_progress(start_menu, &controller.glass_state, 0.0);
-        start_menu.invoke_reset_search();
+        reset_search(start_menu);
         controller.phase = if snapshot_ready {
             Phase::Materializing { started_at: Instant::now() }
         } else {
@@ -484,11 +486,16 @@ fn hide(start_menu: &StartMenu) {
         set_progress(start_menu, &controller.glass_state, 0.0);
     });
 
-    start_menu.invoke_reset_search();
+    reset_search(start_menu);
 
     if let Err(error) = start_menu.hide() {
         eprintln!("failed to hide the menu: {error}");
     }
+}
+
+fn reset_search(start_menu: &StartMenu) {
+    start_menu.invoke_reset_search();
+    trace::forget_search();
 }
 
 fn launch(start_menu: &StartMenu, row: i32) {
