@@ -14,6 +14,10 @@
   - _Avoid_: popularity, usage score.
 - **Power Flyout**: The panel above the card's power button listing Lock, Sign out, Sleep, Restart and Shut down.
   - _Avoid_: shutdown menu, power menu.
+- **App Action Flyout**: The panel opened from an app row (right-click, the Menu key or Shift+F10) listing what else can be done with that app, such as Open file location, Run as administrator or the app's own desktop actions.
+  - _Avoid_: context menu, jump list, right-click menu.
+- **Web Fallback**: The opt-in last search row, below every other result, that opens the query in the user's chosen search engine. Nothing is sent anywhere unless that row is chosen.
+  - _Avoid_: web results, web suggestions, Bing search.
 - **Card Anchor**: One of nine alignment presets, chosen on a 3x3 grid (`top-left` through `bottom-right`, `middle-left` by default), that determines where the `640x720` Liquid-Glass Card sits within the active monitor's Fog Veil.
   - _Avoid_: window dock, screen gravity.
 - **Veil Mode**: How the area around the Liquid-Glass Card is drawn: the full Fog Veil (blurred and dimmed), Dim (the live desktop dimmed without blur) or Off (the card alone).

@@ -2,8 +2,12 @@
 
 ## Status
 
-Accepted, but does not work on current Windows 11 builds (checked 2026-10-20 on build 26200). See
-**Finding** below. Taskbar Start clicks are left unsupported for now.
+Withdrawn (2026-10-28). The hook does not work on current Windows 11 builds (checked 2026-10-20 on
+build 26200, see **Finding** below), so the hook DLL, its shared memory and the Start button geometry
+lookup are removed rather than injected into `explorer.exe` for no benefit. Taskbar Start clicks stay
+unsupported and the Windows key is the trigger. A `WH_MOUSE_LL` hook in the host was considered and
+deferred: it runs on every mouse event system-wide and can swallow clicks meant for the buttons next
+to Start when its cached geometry is stale. Revisiting clicks starts from a new ADR.
 
 ## Context
 

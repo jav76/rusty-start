@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "repo": "jav76/rusty-start",
+  "project": {
+    "owner": "jav76",
+    "number": 3,
+    "id": "PVT_kwHOBC_e9M4BpNDg",
+    "title": "Rusty Start",
+    "url": "https://github.com/users/jav76/projects/3"
+  },
+  "status_field": "Status",
+  "states": {
+    "backlog": "Backlog",
+    "ready": "Ready",
+    "in_progress": "In Progress",
+    "in_review": "In review",
+    "done": "Done"
+  },
+  "priority_field": null,
+  "size_field": null,
+  "fields": {
+    "Title": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuGQ",
+      "type": "TITLE"
+    },
+    "Assignees": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuGY",
+      "type": "ASSIGNEES"
+    },
+    "Status": {
+      "id": "PVTSSF_lAHOBC_e9M4BpNDgzhnpuGg",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Backlog",
+          "id": "1a5adf82"
+        },
+        {
+          "name": "Ready",
+          "id": "40e1f617"
+        },
+        {
+          "name": "In Progress",
+          "id": "17f7c404"
+        },
+        {
+          "name": "In review",
+          "id": "c350fe53"
+        },
+        {
+          "name": "Done",
+          "id": "656445c7"
+        }
+      ]
+    },
+    "Labels": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuGo",
+      "type": "LABELS"
+    },
+    "Linked pull requests": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuGs",
+      "type": "LINKED_PULL_REQUESTS"
+    },
+    "Milestone": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuG0",
+      "type": "MILESTONE"
+    },
+    "Repository": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuG4",
+      "type": "REPOSITORY"
+    },
+    "Reviewers": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuHA",
+      "type": "REVIEWERS"
+    },
+    "Parent issue": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuHE",
+      "type": "PARENT_ISSUE"
+    },
+    "Sub-issues progress": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuHI",
+      "type": "SUB_ISSUES_PROGRESS"
+    },
+    "Created": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuHM",
+      "type": "CREATED"
+    },
+    "Updated": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuHQ",
+      "type": "UPDATED"
+    },
+    "Closed": {
+      "id": "PVTF_lAHOBC_e9M4BpNDgzhnpuHU",
+      "type": "CLOSED"
+    }
+  }
+}
