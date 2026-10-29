@@ -33,8 +33,7 @@ cargo test -p rusty-start-host --profile budget --locked -- --ignored
 | -------------------------- | -------------------------------------------------------------------- |
 | `crates/host`              | Resident process: Slint UI, GPU shaders, triggers, app index, search |
 | `crates/host/ui`           | Slint markup, compiled by `build.rs`                                  |
-| `crates/hook`              | DLL injected into `explorer.exe`. Treat it as hostile territory       |
-| `crates/protocol`          | Names and shared-memory layout used by both host and hook             |
+| `crates/protocol`          | Names shared by the host and the programs that toggle it              |
 | `docs/adr`                 | Architecture Decision Records                                         |
 | `packaging/linux`          | Desktop entry and D-Bus service file the `.deb` installs              |
 | `GLOSSARY.md`              | Domain terms. Use them in code, comments and docs                     |
@@ -104,20 +103,7 @@ cargo test -p rusty-start-host --profile budget --locked -- --ignored
   have not initialized it.
 - Never fight a framework's window management after the fact. If winit or Slint needs different
   window behavior, configure it at creation (for example the winit window attributes hook).
-- Cross-process names, message IDs and shared-memory layouts live only in `crates/protocol`.
-  A layout change updates both the host and the hook in the same change.
-
-## Explorer hook DLL (`crates/hook`)
-
-Code here runs inside `explorer.exe`. A bug crashes or freezes the user's shell.
-
-- Every exported or callback entry point wraps its body in `std::panic::catch_unwind`. Never set
-  `panic = "abort"` in any profile.
-- Hook procedures do O(1) work: read shared memory, compare, post a message. No allocation in the
-  hot path, no blocking calls, no locks held across calls, no UI Automation, no `SendMessage`.
-- Always call the next hook. Never swallow messages other than the documented Start button
-  clicks (ADR 0002).
-- The host must stay usable when the hook is missing or fails to inject.
+- Cross-process names and message IDs live only in `crates/protocol`.
 
 ## Slint (`crates/host/ui`)
 
@@ -180,7 +166,7 @@ This project exists to be faster than the built-in Start menu. Treat latency as 
 - Record hard-to-reverse decisions (new process boundaries, injection strategy, rendering
   pipeline, file formats) as `docs/adr/NNNN-short-title.md`.
 - Write concise, practical prose. No em-dashes: use hyphens, colons or separate sentences.
-- Commit messages use Conventional Commits: `feat(host): ...`, `fix(hook): ...`, `docs: ...`,
+- Commit messages use Conventional Commits: `feat(host): ...`, `fix(protocol): ...`, `docs: ...`,
   with a scope matching the crate. The summary is imperative and under 72 characters.
 - No AI attribution in commits or PRs (`Co-Authored-By`, "Generated with" footers).
 - PR descriptions cover a summary, evidence that it works, and whether the change is easy to

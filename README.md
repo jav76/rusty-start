@@ -79,9 +79,7 @@ The Windows key is the supported trigger.
 ## Installing on Windows
 
 Releases ship a `.zip` for x64 and arm64 (Windows on ARM). Extract it anywhere and run
-`rusty-start.exe`. Keep `rusty_start_hook.dll` in the same folder: the host loads the explorer
-taskbar hook from there, and keeps running without it. The binaries are not code-signed, so
-SmartScreen may ask before the first run.
+`rusty-start.exe`. The binaries are not code-signed, so SmartScreen may ask before the first run.
 
 To start Rusty Start at sign-in, open **Settings > Setup** in the menu and choose **Install**, or run
 `rusty-start setup`. It adds a `RustyStart` value under
@@ -162,7 +160,6 @@ Linux):
 | `veil_mode`        | `fog` (blurred and dimmed), `dim` (dimmed only), `off` (card only)   | `fog`           |
 | `veil_blur`        | Fog Veil blur strength, `0` to `100`                                | `100`           |
 | `use_win_key`      | `true` or `false`: open the menu with the Windows key (Windows only) | `true`          |
-| `use_taskbar_hook` | `true` or `false`: install the explorer taskbar hook (Windows only) | `true`          |
 
 On Linux the Meta key binding belongs to the desktop, so `use_win_key` has no effect there; use the
 Settings Page switch, `rusty-start setup` or `rusty-start setup --undo` instead.
@@ -211,8 +208,7 @@ standards for contributors and coding agents.
 | Path              | Purpose                                                                                      |
 | ----------------- | -------------------------------------------------------------------------------------------- |
 | `crates/host`     | Resident process: Liquid-Glass GPU shaders, desktop capture, Slint UI, triggers, app search, pins and power actions |
-| `crates/hook`     | In-process Explorer hook DLL: Start button click suppression and IPC trigger dispatch        |
-| `crates/protocol` | Window class, message names, mutex name, D-Bus names and shared memory geometry shared by host and hook |
+| `crates/protocol` | Window class, message names, mutex name and D-Bus names shared by the host and programs that toggle it |
 | `GLOSSARY.md`     | Domain terminology such as the Fog Veil, Liquid-Glass Card, Card Anchor and Frecency          |
 | `docs/adr`        | Architecture Decision Records                                                                |
 | `packaging/linux` | Desktop entry and D-Bus service file installed by the `.deb`                                 |

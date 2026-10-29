@@ -24,7 +24,7 @@
   - _Avoid_: backdrop mode, blur toggle.
 - **Settings Page**: The view inside the Liquid-Glass Card, opened with the gear button or Ctrl+,, that replaces the app list with the card position, Veil Mode, blur strength, Meta key switch and Setup Audit.
   - _Avoid_: settings window, preferences dialog.
-- **Setup Audit**: The per-item report of the desktop integration `rusty-start setup` manages (Meta key binding, KWin window rule, autostart), each installed, missing or in conflict, plus read-only hook status on Windows.
+- **Setup Audit**: The per-item report of the desktop integration `rusty-start setup` manages (Meta key binding, KWin window rule, autostart), each installed, missing or in conflict, plus the read-only Windows-key hook status on Windows.
   - _Avoid_: health check, diagnostics.
 - **Launch ID**: The platform identifier the host uses to launch an app and to key its pins and launch history: an AppUserModelID or known-folder path on Windows, a desktop file ID (`org.kde.konsole.desktop`) on Linux.
   - _Avoid_: app path, exe name, app ID.

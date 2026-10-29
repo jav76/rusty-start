@@ -14,8 +14,6 @@ mod power;
 mod search;
 mod settings;
 mod setup;
-#[cfg(backend_win32)]
-mod taskbar;
 mod trace;
 mod trigger;
 mod usage;

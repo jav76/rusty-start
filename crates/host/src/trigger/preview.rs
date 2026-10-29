@@ -22,10 +22,10 @@ pub fn set_win_key(enabled: bool) {
     eprintln!("preview: the Windows key would {} the menu", if enabled { "open" } else { "no longer open" });
 }
 
-/// Stand-in hook rows, so the Setup section shows read-only status in each state it uses on Windows.
+/// Stand-in rows, so the Setup section shows the read-only states the Windows-key hook row takes.
 pub fn status_items() -> Vec<SetupItem> {
     vec![
         SetupItem::new("Windows key hook", ItemState::Unavailable, "none in preview builds"),
-        SetupItem::new("Taskbar hook", ItemState::Conflict, "sample failure (preview)"),
+        SetupItem::new("Windows key hook (sample)", ItemState::Conflict, "sample failure (preview)"),
     ]
 }

@@ -30,9 +30,9 @@ const ANIMATION_INTERVAL: Duration = Duration::from_millis(8);
 /// How long an open waits for the desktop snapshot before it condenses as Plain Glass. The window
 /// is already shown and focused while it waits, so typing is never lost.
 const SNAPSHOT_WAIT: Duration = Duration::from_millis(100);
-/// Toggles arriving this soon after a focus-loss dismiss are ignored. Clicking the taskbar Start
-/// button deactivates the menu on mouse-down and posts the toggle on mouse-up, which would
-/// otherwise reopen the menu the click just closed.
+/// Toggles arriving this soon after a focus-loss dismiss are ignored. A panel or taskbar button that
+/// toggles the menu deactivates it on mouse-down and toggles on mouse-up, which would otherwise
+/// reopen the menu the click just closed.
 const REOPEN_GUARD: Duration = Duration::from_millis(400);
 
 /// Launch IDs whose icons were already handed to the menu. Only the background loader and watcher
