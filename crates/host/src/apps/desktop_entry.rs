@@ -1,5 +1,5 @@
 //! The subset of the freedesktop Desktop Entry specification the menu needs: the `[Desktop Entry]`
-//! group, localized names, visibility rules and desktop file IDs.
+//! group, localized names and keywords, visibility rules and desktop file IDs.
 
 use std::path::Path;
 
@@ -7,6 +7,9 @@ use std::path::Path;
 #[expect(clippy::struct_excessive_bools, reason = "mirrors the boolean keys of the specification")]
 pub struct DesktopEntry {
     pub name: String,
+    /// What kind of app it is, such as "Web Browser".
+    pub generic_name: Option<String>,
+    pub keywords: Vec<String>,
     pub exec: Option<String>,
     pub icon: Option<String>,
     /// Working directory for the launched program.
@@ -28,9 +31,9 @@ impl DesktopEntry {
         let mut entry = Self::default();
         let mut in_entry_group: bool = false;
         let mut saw_entry_group: bool = false;
-        // Rank of the `Name` kept so far: an index into `locales`, `locales.len()` for the
-        // unlocalized key.
-        let mut name_rank: Option<usize> = None;
+        let mut name = Localized::default();
+        let mut generic_name = Localized::default();
+        let mut keywords = Localized::default();
 
         for raw_line in contents.lines() {
             let line: &str = raw_line.trim();
@@ -53,20 +56,9 @@ impl DesktopEntry {
             let (key, locale) = split_locale(raw_key.trim());
 
             match (key, locale) {
-                ("Name", None) => {
-                    if name_rank.is_none() {
-                        entry.name = value;
-                        name_rank = Some(locales.len());
-                    }
-                }
-                ("Name", Some(locale)) => {
-                    if let Some(rank) = locales.iter().position(|candidate| candidate == locale)
-                        && name_rank.is_none_or(|kept| rank < kept)
-                    {
-                        entry.name = value;
-                        name_rank = Some(rank);
-                    }
-                }
+                ("Name", _) => name.offer(value, locale, locales),
+                ("GenericName", _) => generic_name.offer(value, locale, locales),
+                ("Keywords", _) => keywords.offer(value, locale, locales),
                 (_, Some(_)) => {}
                 ("Type", None) => entry.is_application = value == "Application",
                 ("Exec", None) => entry.exec = Some(value),
@@ -83,6 +75,9 @@ impl DesktopEntry {
             }
         }
 
+        entry.name = name.value.unwrap_or_default();
+        entry.generic_name = generic_name.value.filter(|generic_name| !generic_name.is_empty());
+        entry.keywords = keywords.value.as_deref().map(split_list).unwrap_or_default();
         (saw_entry_group && !entry.name.is_empty()).then_some(entry)
     }
 
@@ -100,6 +95,29 @@ impl DesktopEntry {
             && (self.only_show_in.is_empty() || names_current(&self.only_show_in))
             && !names_current(&self.not_show_in)
             && self.try_exec.as_deref().is_none_or(program_exists)
+    }
+}
+
+/// The value of a localized key for the most preferred locale seen so far.
+#[derive(Default)]
+struct Localized {
+    value: Option<String>,
+    /// An index into the preferred locales, or their count for the unlocalized key.
+    rank: Option<usize>,
+}
+
+impl Localized {
+    fn offer(&mut self, value: String, locale: Option<&str>, locales: &[String]) {
+        let rank: Option<usize> = match locale {
+            None => Some(locales.len()),
+            Some(locale) => locales.iter().position(|candidate| candidate == locale),
+        };
+        if let Some(rank) = rank
+            && self.rank.is_none_or(|kept| rank < kept)
+        {
+            self.value = Some(value);
+            self.rank = Some(rank);
+        }
     }
 }
 
@@ -191,6 +209,10 @@ Type=Application
 Name=Konsole
 Name[de]=Konsole (de)
 Name[de_DE]=Konsole (de_DE)
+GenericName=Terminal
+GenericName[de]=Terminalprogramm
+Keywords=terminal;console;command line;
+Keywords[de]=Kommandozeile;Konsole;
 Exec=konsole
 Icon=utilities-terminal
 OnlyShowIn=KDE;
@@ -220,6 +242,17 @@ Exec=konsole --new-window
         assert_eq!(DesktopEntry::parse(KONSOLE, &locales("de_DE.UTF-8")).expect("valid").name, "Konsole (de_DE)");
         assert_eq!(DesktopEntry::parse(KONSOLE, &locales("de_AT.UTF-8")).expect("valid").name, "Konsole (de)");
         assert_eq!(DesktopEntry::parse(KONSOLE, &locales("fr_FR.UTF-8")).expect("valid").name, "Konsole");
+    }
+
+    #[test]
+    fn picks_localized_generic_names_and_keywords() {
+        let english = DesktopEntry::parse(KONSOLE, &locales("en_US.UTF-8")).expect("valid");
+        let german = DesktopEntry::parse(KONSOLE, &locales("de_DE.UTF-8")).expect("valid");
+
+        assert_eq!(english.generic_name.as_deref(), Some("Terminal"));
+        assert_eq!(english.keywords, ["terminal", "console", "command line"]);
+        assert_eq!(german.generic_name.as_deref(), Some("Terminalprogramm"));
+        assert_eq!(german.keywords, ["Kommandozeile", "Konsole"]);
     }
 
     #[test]

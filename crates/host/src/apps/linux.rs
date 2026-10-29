@@ -74,7 +74,8 @@ pub fn load() -> Result<Vec<App>> {
             }
 
             entry_files.insert(id.clone(), EntryFile { path, icon: entry.icon });
-            apps.push(App { name: entry.name, launch_id: id });
+            let keywords: Vec<String> = entry.generic_name.into_iter().chain(entry.keywords).collect();
+            apps.push(App { name: entry.name, launch_id: id, keywords });
         }
     }
 

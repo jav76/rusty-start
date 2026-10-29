@@ -255,7 +255,8 @@ fn read_app(item: &IShellItem) -> Option<App> {
         return None;
     }
 
-    Some(App { name, launch_id })
+    let keywords: Vec<String> = super::exe_keyword(&launch_id).into_iter().collect();
+    Some(App { name, launch_id, keywords })
 }
 
 fn display_name(item: &IShellItem, form: SIGDN) -> Result<String> {

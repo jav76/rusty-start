@@ -136,6 +136,9 @@ listed in an installed desktop entry; without one the menu opens as Plain Glass.
   working because KWin only calls Rusty Start for a Meta tap on its own.
 - With an empty search the list shows **Pinned** apps, up to five **Recent** apps, then **All apps**.
   Search results rank apps you launch often and recently above others that match equally well.
+- Search also finds apps by keyword: the generic name and keywords of their desktop entry on Linux
+  (`terminal` finds Konsole), and their program file name on Windows (`mspaint`). These matches
+  rank below matches on the app's name.
 - The Settings Page applies each change at once and saves it to `config.toml`: the card position
   (a 3x3 grid), the Veil Mode, the Fog Veil blur strength, whether the Meta (Windows) key opens the
   menu, and setup. On Plasma the Meta switch moves the key between Rusty Start and the Application
