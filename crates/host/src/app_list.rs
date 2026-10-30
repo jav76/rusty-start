@@ -335,8 +335,12 @@ mod tests {
 
     fn catalog(names: &[&str]) -> Catalog {
         let mut catalog = Catalog::new();
-        catalog
-            .set_apps(names.iter().map(|name| App { name: name.to_string(), launch_id: name.to_string() }).collect());
+        catalog.set_apps(
+            names
+                .iter()
+                .map(|name| App { name: name.to_string(), launch_id: name.to_string(), keywords: Vec::new() })
+                .collect(),
+        );
         catalog
     }
 
@@ -446,8 +450,8 @@ mod tests {
         assert_eq!(row_after_toggle(&rows, paint, Section::Recent), Some(1));
     }
 
-    /// Names like "Contoso Photo Studio 3", with pins and launch history, so queries reach every
-    /// match quality and the frecency lookups.
+    /// Names like "Contoso Photo Studio 3", with keywords, pins and launch history, so queries reach
+    /// every match quality and the frecency lookups.
     fn synthetic_catalog(app_count: usize) -> Catalog {
         const VENDORS: [&str; 8] =
             ["Microsoft", "Contoso", "Fabrikam", "Adobe", "Mozilla", "Northwind", "Tailspin", "Litware"];
@@ -469,6 +473,7 @@ mod tests {
             "Docs",
             "Backup Tool",
         ];
+        const KEYWORDS: [&str; 6] = ["Text Editor", "graphics", "utility", "network", "office suite", "media"];
 
         let names: Vec<String> = (0..app_count)
             .map(|index| {
@@ -478,8 +483,18 @@ mod tests {
                 format!("{vendor} {product} {edition}")
             })
             .collect();
-        let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let mut catalog = catalog(&name_refs);
+        let mut catalog = Catalog::new();
+        catalog.set_apps(
+            names
+                .iter()
+                .enumerate()
+                .map(|(index, name)| App {
+                    name: name.clone(),
+                    launch_id: name.clone(),
+                    keywords: (0..2).map(|offset| KEYWORDS[(index + offset) % KEYWORDS.len()].to_owned()).collect(),
+                })
+                .collect(),
+        );
         for name in names.iter().step_by(97) {
             catalog.usage.toggle_pin(name);
         }
@@ -506,7 +521,8 @@ mod tests {
     #[ignore = "timing test for optimized builds: cargo test -p rusty-start-host --profile budget -- --ignored"]
     fn rows_for_each_keystroke_stay_within_the_latency_budget() {
         let catalog = synthetic_catalog(BUDGET_APP_COUNT);
-        let keystrokes = ["", "m", "mi", "mic", "micro", "microsoft", "microsoft e", "ps", "photo st", "o", "zzz"];
+        let keystrokes =
+            ["", "m", "mi", "mic", "micro", "microsoft", "microsoft e", "ps", "photo st", "o", "gra", "text ed", "zzz"];
 
         let (slowest_query, slowest): (&str, Duration) = keystrokes
             .into_iter()

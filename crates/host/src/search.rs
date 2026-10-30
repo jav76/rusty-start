@@ -6,15 +6,23 @@ use std::cmp::Reverse;
 /// Anything listed by name in the menu.
 pub trait Searchable {
     fn name(&self) -> &str;
+
+    /// Other words the item is found by, such as "terminal" for Konsole. Matches on them rank below
+    /// every match on the name except a substring.
+    fn keywords(&self) -> &[String] {
+        &[]
+    }
 }
 
-/// How well an app name matches a query. Earlier variants rank higher.
+/// How well an item matches a query. Earlier variants rank higher.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Rank {
     Exact,
     Prefix,
     WordPrefix,
     Initials,
+    /// Every query word starts a keyword word or a name word.
+    Keyword,
     Substring,
 }
 
@@ -25,17 +33,23 @@ struct SearchKey {
     compact: String,
     words: Vec<String>,
     initials: String,
+    /// Words of every keyword, matched by prefix only.
+    keyword_words: Vec<String>,
 }
 
 impl SearchKey {
-    fn new(name: &str) -> Self {
+    fn new(name: &str, keywords: &[String]) -> Self {
         let words: Vec<String> = split_words(name).into_iter().map(str::to_lowercase).collect();
         let initials: String = words.iter().filter_map(|word| word.chars().next()).collect();
+        let mut keyword_words: Vec<String> =
+            keywords.iter().flat_map(|keyword| split_words(keyword)).map(str::to_lowercase).collect();
+        keyword_words.sort_unstable();
+        keyword_words.dedup();
 
         let name: String = name.to_lowercase();
         let compact: String = name.split_whitespace().collect();
 
-        Self { name, compact, words, initials }
+        Self { name, compact, words, initials, keyword_words }
     }
 
     fn rank(&self, query: &str, query_words: &[&str]) -> Option<Rank> {
@@ -47,11 +61,20 @@ impl SearchKey {
             Some(Rank::WordPrefix)
         } else if query_words.len() == 1 && self.initials.starts_with(query) {
             Some(Rank::Initials)
+        } else if self.matches_keywords(query_words) {
+            Some(Rank::Keyword)
         } else if self.name.contains(query) {
             Some(Rank::Substring)
         } else {
             None
         }
+    }
+
+    fn matches_keywords(&self, query_words: &[&str]) -> bool {
+        !self.keyword_words.is_empty()
+            && query_words
+                .iter()
+                .all(|query_word| self.keyword_words.iter().chain(&self.words).any(|word| word.starts_with(query_word)))
     }
 }
 
@@ -105,7 +128,7 @@ impl<T> Default for Index<T> {
 impl<T: Searchable> Index<T> {
     pub fn new(mut items: Vec<T>) -> Self {
         items.sort_by_cached_key(|item| item.name().to_lowercase());
-        let keys: Vec<SearchKey> = items.iter().map(|item| SearchKey::new(item.name())).collect();
+        let keys: Vec<SearchKey> = items.iter().map(|item| SearchKey::new(item.name(), item.keywords())).collect();
 
         Self { items, keys }
     }
@@ -165,6 +188,34 @@ mod tests {
 
     fn search(index: &Index<String>, query: &str) -> Vec<String> {
         names(index, index.search(query, |_| 0))
+    }
+
+    struct Tagged {
+        name: &'static str,
+        keywords: Vec<String>,
+    }
+
+    impl Searchable for Tagged {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn keywords(&self) -> &[String] {
+            &self.keywords
+        }
+    }
+
+    fn tagged(items: &[(&'static str, &[&str])]) -> Index<Tagged> {
+        Index::new(
+            items
+                .iter()
+                .map(|&(name, keywords)| Tagged { name, keywords: keywords.iter().map(ToString::to_string).collect() })
+                .collect(),
+        )
+    }
+
+    fn search_tagged(index: &Index<Tagged>, query: &str, score: impl Fn(&Tagged) -> u64) -> Vec<&'static str> {
+        index.search(query, score).into_iter().map(|position| index.get(position).unwrap().name).collect()
     }
 
     #[test]
@@ -255,6 +306,36 @@ mod tests {
         let index = index(&["Calculator", "Notepad"]);
 
         assert_eq!(search(&index, "zzz"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn keyword_match_ranks_below_initials_and_above_substring() {
+        let index = tagged(&[("Kate", &[]), ("Konsole", &["Terminal"]), ("Task Explorer", &[])]);
+
+        assert_eq!(search_tagged(&index, "te", |_| 0), ["Task Explorer", "Konsole", "Kate"]);
+    }
+
+    #[test]
+    fn score_never_lifts_a_keyword_match_over_a_name_match() {
+        let index = tagged(&[("Konsole", &["terminal"]), ("Windows Terminal", &[])]);
+        let frecency = |item: &Tagged| if item.name == "Konsole" { 300 } else { 0 };
+
+        assert_eq!(search_tagged(&index, "term", frecency), ["Windows Terminal", "Konsole"]);
+    }
+
+    #[test]
+    fn keywords_never_match_by_substring() {
+        let index = tagged(&[("Konsole", &["terminal"])]);
+
+        assert_eq!(search_tagged(&index, "minal", |_| 0), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn keyword_queries_may_mix_name_and_keyword_words() {
+        let index = tagged(&[("Firefox", &["Web Browser"]), ("Chromium", &["Web Browser"])]);
+
+        assert_eq!(search_tagged(&index, "browser", |_| 0), ["Firefox", "Chromium"]);
+        assert_eq!(search_tagged(&index, "fire brow", |_| 0), ["Firefox"]);
     }
 
     #[test]

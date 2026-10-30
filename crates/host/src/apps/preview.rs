@@ -4,23 +4,32 @@ use slint::Rgba8Pixel;
 
 use super::{App, ICON_SIZE, IconPixels};
 
-const SAMPLE_APPS: [&str; 12] = [
-    "Calculator",
-    "Command Prompt",
-    "File Explorer",
-    "Microsoft Edge",
-    "Notepad",
-    "Paint",
-    "PowerShell",
-    "Settings",
-    "Snipping Tool",
-    "Task Manager",
-    "Terminal",
-    "Visual Studio Code",
+/// Sample apps with the kind of keywords the platform backends find: program file names on
+/// Windows, generic names and keywords on Linux.
+const SAMPLE_APPS: [(&str, &[&str]); 12] = [
+    ("Calculator", &["calc", "math"]),
+    ("Command Prompt", &["cmd", "console"]),
+    ("File Explorer", &["explorer", "files"]),
+    ("Microsoft Edge", &["msedge", "web browser"]),
+    ("Notepad", &["text editor"]),
+    ("Paint", &["mspaint", "drawing"]),
+    ("PowerShell", &["pwsh", "console"]),
+    ("Settings", &["control panel"]),
+    ("Snipping Tool", &["screenshot"]),
+    ("Task Manager", &["taskmgr", "processes"]),
+    ("Terminal", &["wt", "console"]),
+    ("Visual Studio Code", &["code", "editor"]),
 ];
 
 pub fn load() -> anyhow::Result<Vec<App>> {
-    Ok(SAMPLE_APPS.iter().map(|name| App { name: name.to_string(), launch_id: name.to_string() }).collect())
+    Ok(SAMPLE_APPS
+        .iter()
+        .map(|&(name, keywords)| App {
+            name: name.to_owned(),
+            launch_id: name.to_owned(),
+            keywords: keywords.iter().map(|&keyword| keyword.to_owned()).collect(),
+        })
+        .collect())
 }
 
 /// Solid placeholder tiles with a per-app hue, so the preview shows where icons go.
