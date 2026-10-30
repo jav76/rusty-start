@@ -1,0 +1,65 @@
+/// The App Action Flyout for one app row. Labels come from Rust, which decides what each app
+/// offers; the flyout only renders them and reports the chosen index.
+export component ActionFlyout inherits Rectangle {
+    in property <[string]> labels;
+    in property <string> app-name;
+    /// The entry the keyboard highlights. Hovering an entry moves it there through `highlight`.
+    in property <int> current-index;
+
+    callback choose(int);
+    callback highlight(int);
+
+    width: 240px;
+    height: root.labels.length * 40px + 12px;
+    border-radius: 14px;
+    // The glass shader draws only the card body, so the flyout carries its own frosted fill.
+    background: #1b2638f2;
+    border-width: 1px;
+    border-color: #ffffff30;
+    drop-shadow-blur: 18px;
+    drop-shadow-color: #00000066;
+    accessible-role: list;
+    accessible-label: "Actions for " + root.app-name;
+
+    VerticalLayout {
+        padding: 6px;
+
+        for label[index] in root.labels: Rectangle {
+            property <bool> current: index == root.current-index;
+
+            height: 40px;
+            border-radius: 10px;
+            background: self.current ? #7cc8ff36 : transparent;
+            border-width: self.current ? 1px : 0px;
+            border-color: #aee6ff88;
+            accessible-role: list-item;
+            accessible-label: label;
+            accessible-item-selected: self.current;
+            accessible-action-default => {
+                root.choose(index);
+            }
+
+            Text {
+                x: 14px;
+                width: parent.width - 28px;
+                height: 100%;
+                text: label;
+                color: parent.current ? #ffffff : #e6f0ff;
+                font-size: 14px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            action-touch := TouchArea {
+                changed has-hover => {
+                    if (self.has-hover) {
+                        root.highlight(index);
+                    }
+                }
+                clicked => {
+                    root.choose(index);
+                }
+            }
+        }
+    }
+}

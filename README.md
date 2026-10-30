@@ -118,18 +118,20 @@ listed in an installed desktop entry; without one the menu opens as Plain Glass.
 
 ## Usage
 
-| Action                            | Keys or mouse                                                   |
-| --------------------------------- | --------------------------------------------------------------- |
-| Open or close the menu            | Tap Win (Meta), or Ctrl+Alt+Space on Windows                    |
-| Search                            | Type while the menu is open                                     |
-| Move the selection                | Up and Down                                                     |
-| Launch                            | Enter, or click a row                                           |
-| Pin or unpin the selected app     | Ctrl+P, or the pin button on a row                              |
-| Power options                     | Power button in the bottom-right corner, or search for them     |
-| Open or close the Settings Page   | Ctrl+, or the gear button in the top-right corner               |
-| Move between settings             | Tab and Shift+Tab; arrow keys change the focused setting        |
-| Back to the app list              | Escape on the Settings Page, or the back arrow                  |
-| Close                             | Escape, a click outside the card, or switching to another app   |
+| Action                                 | Keys or mouse                                                 |
+| -------------------------------------- | ------------------------------------------------------------- |
+| Open or close the menu                 | Tap Win (Meta), or Ctrl+Alt+Space on Windows                  |
+| Search                                 | Type while the menu is open                                   |
+| Move the selection                     | Up and Down                                                   |
+| Launch                                 | Enter, or click a row                                         |
+| Pin or unpin the selected app          | Ctrl+P, or the pin button on a row                            |
+| Show more actions for the selected app | Shift+F10 or the Menu key, or right-click a row               |
+| Run the selected app as administrator  | Ctrl+Shift+Enter (Windows programs only)                      |
+| Power options                          | Power button in the bottom-right corner, or search for them   |
+| Open or close the Settings Page        | Ctrl+, or the gear button in the top-right corner             |
+| Move between settings                  | Tab and Shift+Tab; arrow keys change the focused setting      |
+| Back to the app list                   | Escape on the Settings Page, or the back arrow                |
+| Close                                  | Escape, a click outside the card, or switching to another app |
 
 - Windows shortcuts such as Win+R, Win+E and Win+Shift+S work as usual, with the menu open or closed.
   Right-clicking the Start button (the Win+X menu) is unaffected. On Plasma, Meta shortcuts keep
@@ -139,6 +141,12 @@ listed in an installed desktop entry; without one the menu opens as Plain Glass.
 - Search also finds apps by keyword: the generic name and keywords of their desktop entry on Linux
   (`terminal` finds Konsole), and their program file name on Windows (`mspaint`). These matches
   rank below matches on the app's name.
+- The App Action Flyout lists what else can be done with an app: Pin or Unpin, then on Windows
+  Run as administrator and Open file location for programs listed by file path, and Uninstall,
+  which opens Settings > Installed apps. Packaged (Store) apps offer only Uninstall. On Linux it
+  lists the app's own desktop entry actions (such as New Private Window) and Open file location,
+  which shows the app's `.desktop` file. Up and Down move through it, Enter chooses, and Escape
+  returns to the list.
 - The Settings Page applies each change at once and saves it to `config.toml`: the card position
   (a 3x3 grid), the Veil Mode, the Fog Veil blur strength, whether the Meta (Windows) key opens the
   menu, and setup. On Plasma the Meta switch moves the key between Rusty Start and the Application

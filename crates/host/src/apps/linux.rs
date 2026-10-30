@@ -10,6 +10,7 @@ use std::env;
 use std::fmt::Write as _;
 use std::fs;
 use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -27,7 +28,7 @@ use zbus::zvariant::Value;
 use super::desktop_entry::{self, DesktopEntry};
 use super::exec::{self, ExecContext};
 use super::icon_theme::{self, IconLookup};
-use super::{App, ICON_SIZE, IconPixels, raster};
+use super::{App, AppAction, ICON_SIZE, IconPixels, raster};
 use crate::dbus;
 
 /// Installers write many files in a burst, so the rebuild waits for the directories to go quiet.
@@ -42,6 +43,16 @@ static ENTRY_FILES: LazyLock<Mutex<HashMap<String, EntryFile>>> = LazyLock::new(
 struct EntryFile {
     path: PathBuf,
     icon: Option<String>,
+    /// The entry's own actions, as `AppAction::Desktop`.
+    actions: Vec<AppAction>,
+}
+
+/// What to start from a desktop entry.
+#[derive(Clone, Copy)]
+enum Target<'a> {
+    App,
+    /// The action with this ID.
+    Action(&'a str),
 }
 
 /// Lists the visible desktop entries. Reads a few hundred small files, so call it off the UI
@@ -73,7 +84,12 @@ pub fn load() -> Result<Vec<App>> {
                 continue;
             }
 
-            entry_files.insert(id.clone(), EntryFile { path, icon: entry.icon });
+            let actions: Vec<AppAction> = entry
+                .actions
+                .into_iter()
+                .map(|action| AppAction::Desktop { id: action.id, name: action.name })
+                .collect();
+            entry_files.insert(id.clone(), EntryFile { path, icon: entry.icon, actions });
             let keywords: Vec<String> = entry.generic_name.into_iter().chain(entry.keywords).collect();
             apps.push(App { name: entry.name, launch_id: id, keywords });
         }
@@ -164,17 +180,62 @@ fn decode_png(data: &[u8]) -> Result<Vec<u8>> {
 
 /// Launches `app` on a background thread, which then waits for it so it never stays a zombie.
 pub fn launch(app: &App) {
-    let launch_id: String = app.launch_id.clone();
-    let entry_file: Option<EntryFile> =
-        ENTRY_FILES.lock().unwrap_or_else(PoisonError::into_inner).get(&launch_id).cloned();
-    let Some(entry_file) = entry_file else {
-        eprintln!("failed to launch {}: its desktop entry is no longer listed", app.name);
+    let Some(entry_file) = entry_file(app) else {
         return;
     };
+    let launch_id: String = app.launch_id.clone();
+    run_in_background(move || {
+        launch_entry(&launch_id, &entry_file.path, Target::App).with_context(|| format!("failed to launch {launch_id}"))
+    });
+}
 
+/// The App Action Flyout entries for `app`: its desktop entry actions, then Open file location,
+/// which shows the desktop entry file.
+pub fn actions(app: &App) -> Vec<AppAction> {
+    let entry_files = ENTRY_FILES.lock().unwrap_or_else(PoisonError::into_inner);
+    let desktop_actions: &[AppAction] = entry_files.get(&app.launch_id).map_or(&[], |entry| &entry.actions);
+    desktop_actions.iter().cloned().chain([AppAction::OpenFileLocation]).collect()
+}
+
+/// Performs one of the `actions` of `app` on a background thread.
+pub fn perform_action(app: &App, action: &AppAction) {
+    let Some(entry_file) = entry_file(app) else {
+        return;
+    };
+    let launch_id: String = app.launch_id.clone();
+    let label: String = action.label().to_owned();
+    match action {
+        AppAction::Desktop { id, .. } => {
+            let action_id: String = id.clone();
+            run_in_background(move || {
+                launch_entry(&launch_id, &entry_file.path, Target::Action(&action_id))
+                    .with_context(|| format!("failed to run {label:?} for {launch_id}"))
+            });
+        }
+        AppAction::OpenFileLocation => run_in_background(move || {
+            show_in_file_manager(&entry_file.path).with_context(|| format!("failed to show the file of {launch_id}"))
+        }),
+        AppAction::RunAsAdministrator | AppAction::Uninstall => {
+            eprintln!("{label} is not available on Linux, so {launch_id} was left alone");
+        }
+    }
+}
+
+/// The desktop file `app` was listed from, or `None` (logged) when it is no longer listed.
+fn entry_file(app: &App) -> Option<EntryFile> {
+    let entry_file: Option<EntryFile> =
+        ENTRY_FILES.lock().unwrap_or_else(PoisonError::into_inner).get(&app.launch_id).cloned();
+    if entry_file.is_none() {
+        eprintln!("failed to start {}: its desktop entry is no longer listed", app.name);
+    }
+    entry_file
+}
+
+/// Runs `job` on a `rusty-start-launch` thread and logs its error.
+fn run_in_background(job: impl FnOnce() -> Result<()> + Send + 'static) {
     let spawned = thread::Builder::new().name("rusty-start-launch".into()).spawn(move || {
-        if let Err(error) = launch_entry(&launch_id, &entry_file.path) {
-            eprintln!("failed to launch {launch_id}: {error:#}");
+        if let Err(error) = job() {
+            eprintln!("{error:#}");
         }
     });
     if let Err(error) = spawned {
@@ -182,37 +243,94 @@ pub fn launch(app: &App) {
     }
 }
 
-fn launch_entry(launch_id: &str, path: &Path) -> Result<()> {
+fn launch_entry(launch_id: &str, path: &Path, target: Target<'_>) -> Result<()> {
     let contents: String = fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     let entry: DesktopEntry = DesktopEntry::parse(&contents, &[]).context("the desktop entry is no longer valid")?;
     let app_id: &str = launch_id.strip_suffix(".desktop").unwrap_or(launch_id);
 
     if entry.dbus_activatable {
-        match activate_over_dbus(app_id) {
+        match activate_over_dbus(app_id, target) {
             Ok(()) => return Ok(()),
-            Err(error) if entry.exec.is_some() => {
+            Err(error) if target_exec(&entry, target).is_some() => {
                 eprintln!("D-Bus activation of {app_id} failed, running Exec: {error:#}");
             }
             Err(error) => return Err(error),
         }
     }
 
-    let exec: &str = entry.exec.as_deref().context("the desktop entry has no Exec")?;
-    let desktop_file: String = path.to_string_lossy().into_owned();
-    let mut argv: Vec<String> = exec::expand(
-        exec,
-        &ExecContext { name: &entry.name, icon: entry.icon.as_deref(), desktop_file: &desktop_file },
-    )?;
-    if entry.terminal {
-        argv.splice(0..0, ["x-terminal-emulator".to_owned(), "-e".to_owned()]);
-    }
-
+    let argv: Vec<String> = command_line(&entry, target, &path.to_string_lossy())?;
     let mut child: Child = spawn_detached(&argv, entry.path.as_deref())?;
     if let Err(error) = move_into_scope(app_id, child.id()) {
         eprintln!("{app_id} runs in the host's cgroup and stops with it: {error:#}");
     }
     let _ = child.wait();
     Ok(())
+}
+
+/// The `Exec` value that starts `target`.
+fn target_exec<'a>(entry: &'a DesktopEntry, target: Target<'_>) -> Option<&'a str> {
+    match target {
+        Target::App => entry.exec.as_deref(),
+        Target::Action(id) => entry.action(id)?.exec.as_deref(),
+    }
+}
+
+/// The program and arguments that start `target`, run in a terminal when the entry asks for one.
+fn command_line(entry: &DesktopEntry, target: Target<'_>, desktop_file: &str) -> Result<Vec<String>> {
+    let icon: Option<&str> = match target {
+        Target::App => entry.icon.as_deref(),
+        Target::Action(id) => {
+            let action = entry.action(id).with_context(|| format!("the desktop entry has no action {id}"))?;
+            action.icon.as_deref().or(entry.icon.as_deref())
+        }
+    };
+    let exec: &str = target_exec(entry, target).context("the desktop entry has no Exec")?;
+
+    let mut argv: Vec<String> = exec::expand(exec, &ExecContext { name: &entry.name, icon, desktop_file })?;
+    if entry.terminal {
+        argv.splice(0..0, ["x-terminal-emulator".to_owned(), "-e".to_owned()]);
+    }
+    Ok(argv)
+}
+
+/// Shows `file` selected in the file manager, or opens its folder when no file manager offers
+/// `org.freedesktop.FileManager1`.
+fn show_in_file_manager(file: &Path) -> Result<()> {
+    let shown: Result<()> = dbus::session().and_then(|session| {
+        session
+            .call_method(
+                Some("org.freedesktop.FileManager1"),
+                "/org/freedesktop/FileManager1",
+                Some("org.freedesktop.FileManager1"),
+                "ShowItems",
+                &(vec![file_uri(file)], ""),
+            )
+            .context("org.freedesktop.FileManager1.ShowItems failed")?;
+        Ok(())
+    });
+    let Err(error) = shown else {
+        return Ok(());
+    };
+
+    eprintln!("no file manager can select {}, opening its folder instead: {error:#}", file.display());
+    let folder: &Path = file.parent().context("the file has no folder")?;
+    let mut child: Child = spawn_detached(&["xdg-open".to_owned(), folder.to_string_lossy().into_owned()], None)?;
+    let _ = child.wait();
+    Ok(())
+}
+
+/// A `file://` URI for an absolute path, with every byte outside the unreserved set and `/`
+/// percent-encoded.
+fn file_uri(path: &Path) -> String {
+    let mut uri = String::from("file://");
+    for &byte in path.as_os_str().as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'.' | b'_' | b'~') {
+            uri.push(char::from(byte));
+        } else {
+            let _ = write!(uri, "%{byte:02X}");
+        }
+    }
+    uri
 }
 
 fn spawn_detached(argv: &[String], working_dir: Option<&str>) -> Result<Child> {
@@ -236,17 +354,29 @@ fn spawn_detached(argv: &[String], working_dir: Option<&str>) -> Result<Child> {
     command.spawn().with_context(|| format!("failed to run {program}"))
 }
 
-fn activate_over_dbus(app_id: &str) -> Result<()> {
+fn activate_over_dbus(app_id: &str, target: Target<'_>) -> Result<()> {
+    let session = dbus::session()?;
+    let object_path: String = dbus_object_path(app_id);
     let platform_data: HashMap<&str, Value<'_>> = HashMap::new();
-    dbus::session()?
-        .call_method(
-            Some(app_id),
-            dbus_object_path(app_id).as_str(),
-            Some("org.freedesktop.Application"),
-            "Activate",
-            &(platform_data,),
-        )
-        .context("org.freedesktop.Application.Activate failed")?;
+    let interface: Option<&str> = Some("org.freedesktop.Application");
+
+    match target {
+        Target::App => session
+            .call_method(Some(app_id), object_path.as_str(), interface, "Activate", &(platform_data,))
+            .context("org.freedesktop.Application.Activate failed")?,
+        Target::Action(id) => {
+            let parameters: Vec<Value<'_>> = Vec::new();
+            session
+                .call_method(
+                    Some(app_id),
+                    object_path.as_str(),
+                    interface,
+                    "ActivateAction",
+                    &(id, parameters, platform_data),
+                )
+                .context("org.freedesktop.Application.ActivateAction failed")?
+        }
+    };
     Ok(())
 }
 
@@ -508,6 +638,61 @@ mod tests {
         assert_eq!(scope_unit_name("org.kde.konsole", 42), "app-RustyStart-org.kde.konsole-42.scope");
         assert_eq!(scope_unit_name("firefox-esr", 7), "app-RustyStart-firefox\\x2desr-7.scope");
         assert_eq!(scope_unit_name("my app", 1), "app-RustyStart-my\\x20app-1.scope");
+    }
+
+    const FIREFOX: &str = "\
+[Desktop Entry]
+Type=Application
+Name=Firefox
+Exec=firefox %u
+Icon=firefox
+Actions=new-private-window;
+
+[Desktop Action new-private-window]
+Name=New Private Window
+Exec=firefox --private-window %u
+";
+
+    fn firefox() -> DesktopEntry {
+        DesktopEntry::parse(FIREFOX, &[]).expect("valid entry")
+    }
+
+    #[test]
+    fn desktop_actions_launch_their_own_exec() {
+        let argv: Vec<String> =
+            command_line(&firefox(), Target::Action("new-private-window"), "/apps/firefox.desktop").expect("valid");
+
+        assert_eq!(argv, ["firefox", "--private-window"]);
+    }
+
+    #[test]
+    fn the_app_launches_the_entry_exec() {
+        let argv: Vec<String> = command_line(&firefox(), Target::App, "/apps/firefox.desktop").expect("valid");
+
+        assert_eq!(argv, ["firefox"]);
+    }
+
+    #[test]
+    fn terminal_apps_run_their_actions_in_a_terminal() {
+        let entry = DesktopEntry { terminal: true, ..firefox() };
+        let argv: Vec<String> =
+            command_line(&entry, Target::Action("new-private-window"), "/apps/firefox.desktop").expect("valid");
+
+        assert_eq!(argv, ["x-terminal-emulator", "-e", "firefox", "--private-window"]);
+    }
+
+    #[test]
+    fn unknown_actions_are_an_error() {
+        assert!(command_line(&firefox(), Target::Action("gone"), "/apps/firefox.desktop").is_err());
+    }
+
+    #[test]
+    fn file_uris_percent_encode_reserved_bytes() {
+        assert_eq!(
+            file_uri(Path::new("/home/me/.local/share/applications/My App (1).desktop")),
+            "file:///home/me/.local/share/applications/My%20App%20%281%29.desktop"
+        );
+        assert_eq!(file_uri(Path::new("/tmp/caf\u{e9}")), "file:///tmp/caf%C3%A9");
     }
 
     #[test]

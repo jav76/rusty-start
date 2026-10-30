@@ -22,6 +22,7 @@ export component MenuRowView inherits Rectangle {
 
     callback activate();
     callback toggle-pin();
+    callback open-actions();
 
     property <bool> is-header: root.entry.kind == RowKind.header;
     property <bool> is-app: root.entry.kind == RowKind.app;
@@ -50,6 +51,11 @@ export component MenuRowView inherits Rectangle {
         enabled: !root.is-header;
         clicked => {
             root.activate();
+        }
+        pointer-event(event) => {
+            if (event.button == PointerEventButton.right && event.kind == PointerEventKind.up) {
+                root.open-actions();
+            }
         }
     }
 
@@ -133,6 +139,11 @@ export component MenuRowView inherits Rectangle {
                     enabled: root.is-app;
                     clicked => {
                         root.toggle-pin();
+                    }
+                    pointer-event(event) => {
+                        if (event.button == PointerEventButton.right && event.kind == PointerEventKind.up) {
+                            root.open-actions();
+                        }
                     }
                 }
             }
