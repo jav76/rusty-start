@@ -1,4 +1,5 @@
 import { ListView } from "std-widgets.slint";
+import { ActionFlyout } from "action_flyout.slint";
 import { GearGlyph } from "gear_glyph.slint";
 import { MenuRow, MenuRowView, RowKind } from "menu_row.slint";
 import { PowerFlyout } from "power_flyout.slint";
@@ -19,6 +20,10 @@ export component StartMenu inherits Window {
     in-out property <int> selected-index: 0;
     property <length> row-height: 48px;
     property <bool> power-open: false;
+    in property <[string]> action-labels;
+    property <bool> actions-open: false;
+    property <int> action-row: 0;
+    property <int> action-index: 0;
 
     in property <length> monitor-width: 1440px;
     in property <length> monitor-height: 900px;
@@ -40,6 +45,9 @@ export component StartMenu inherits Window {
     callback search(string);
     callback launch(int);
     callback toggle-pin(int);
+    callback open-actions(int);
+    callback choose-action(int);
+    callback run-as-administrator(int);
     callback power(int);
     callback open-settings();
     callback choose-anchor(int);
@@ -55,6 +63,7 @@ export component StartMenu inherits Window {
         root.query = "";
         root.search("");
         root.power-open = false;
+        root.actions-open = false;
         list.content-y = 0px;
         root.select(0, 1);
         search-input.focus();
@@ -67,12 +76,52 @@ export component StartMenu inherits Window {
 
     function toggle-settings() {
         root.power-open = false;
+        root.actions-open = false;
         if (root.page == Page.settings) {
             root.show-apps();
         } else {
             root.page = Page.settings;
             root.open-settings();
         }
+    }
+
+    /// Opens the App Action Flyout for the app in `row`. Rust sets `action-labels` first.
+    public function show-actions(row: int) {
+        root.power-open = false;
+        root.select(row, 1);
+        root.action-row = row;
+        root.action-index = 0;
+        root.actions-open = true;
+    }
+
+    function close-actions() {
+        root.actions-open = false;
+        search-input.focus();
+    }
+
+    function choose-flyout-action(index: int) {
+        root.actions-open = false;
+        root.choose-action(index);
+    }
+
+    /// Keys while the App Action Flyout is open. Every key is consumed, so typing never edits the
+    /// search behind the flyout.
+    function handle-action-key(event: KeyEvent) -> EventResult {
+        let count = root.action-labels.length;
+        if (event.text == Key.Escape || event.text == Key.Menu || (event.modifiers.shift && event.text == Key.F10)) {
+            root.close-actions();
+        } else if (event.text == Key.DownArrow) {
+            root.action-index = Math.mod(root.action-index + 1, count);
+        } else if (event.text == Key.UpArrow) {
+            root.action-index = Math.mod(root.action-index + count - 1, count);
+        } else if (event.text == Key.Home) {
+            root.action-index = 0;
+        } else if (event.text == Key.End) {
+            root.action-index = count - 1;
+        } else if (event.text == Key.Return || event.text == " ") {
+            root.choose-flyout-action(root.action-index);
+        }
+        accept
     }
 
     public function focus-search() {
@@ -128,6 +177,9 @@ export component StartMenu inherits Window {
         // Capture runs before the focused search field sees the key, so these keys always reach
         // the menu while the text cursor stays in the search field.
         capture-key-pressed(event) => {
+            if (root.actions-open) {
+                return root.handle-action-key(event);
+            }
             if (event.text == Key.Escape) {
                 if (root.power-open) {
                     root.power-open = false;
@@ -155,6 +207,14 @@ export component StartMenu inherits Window {
             }
             if (event.modifiers.control && (event.text == "p" || event.text == "P")) {
                 root.toggle-pin(root.selected-index);
+                return accept;
+            }
+            if (event.text == Key.Menu || (event.modifiers.shift && event.text == Key.F10)) {
+                root.open-actions(root.selected-index);
+                return accept;
+            }
+            if (event.text == Key.Return && event.modifiers.control && event.modifiers.shift) {
+                root.run-as-administrator(root.selected-index);
                 return accept;
             }
             if (event.text == Key.Return) {
@@ -332,7 +392,7 @@ export component StartMenu inherits Window {
                     }
                 }
 
-                Rectangle {
+                list-area := Rectangle {
                     vertical-stretch: 1;
 
                 // Virtualized translucent glass app list.
@@ -352,6 +412,9 @@ export component StartMenu inherits Window {
                         }
                         toggle-pin => {
                             root.toggle-pin(index);
+                        }
+                        open-actions => {
+                            root.open-actions(index);
                         }
                     }
                 }
@@ -392,7 +455,7 @@ export component StartMenu inherits Window {
 
                     Text {
                         horizontal-stretch: 1;
-                        text: root.page == Page.settings ? "Esc returns to apps" : "Ctrl+P pins the selected app";
+                        text: root.page == Page.settings ? "Esc returns to apps" : "Ctrl+P pins, Shift+F10 shows more actions";
                         color: #c8daf877;
                         font-size: 12px;
                         vertical-alignment: center;
@@ -419,6 +482,7 @@ export component StartMenu inherits Window {
 
                         power-touch := TouchArea {
                             clicked => {
+                                root.actions-open = false;
                                 root.power-open = !root.power-open;
                                 if (root.page == Page.apps) {
                                     search-input.focus();
@@ -435,6 +499,40 @@ export component StartMenu inherits Window {
                 height: 100%;
                 clicked => {
                     root.power-open = false;
+                }
+            }
+
+            // While the App Action Flyout is open, a click anywhere else in the card closes it.
+            if root.actions-open: TouchArea {
+                width: 100%;
+                height: 100%;
+                clicked => {
+                    root.close-actions();
+                }
+                pointer-event(event) => {
+                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.up) {
+                        root.close-actions();
+                    }
+                }
+            }
+
+            // Opens below its row, or above it when the row is near the bottom of the card.
+            if root.actions-open: ActionFlyout {
+                property <length> row-top: list-area.y + root.action-row * root.row-height + list.content-y;
+                property <length> below: self.row-top + root.row-height + 4px;
+
+                x: list-area.x + 52px;
+                y: self.below + self.height <= parent.height - 24px
+                    ? self.below
+                    : max(24px, self.row-top - self.height - 4px);
+                labels: root.action-labels;
+                app-name: root.rows[root.action-row].text;
+                current-index: root.action-index;
+                choose(index) => {
+                    root.choose-flyout-action(index);
+                }
+                highlight(index) => {
+                    root.action-index = index;
                 }
             }
 

@@ -1,6 +1,7 @@
 // Release builds run without a console window; debug builds keep one for diagnostic output.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod action_flyout;
 mod app_list;
 mod apps;
 mod backdrop;

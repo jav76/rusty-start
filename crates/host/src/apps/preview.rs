@@ -2,7 +2,7 @@
 
 use slint::Rgba8Pixel;
 
-use super::{App, ICON_SIZE, IconPixels};
+use super::{App, AppAction, ICON_SIZE, IconPixels};
 
 /// Sample apps with the kind of keywords the platform backends find: program file names on
 /// Windows, generic names and keywords on Linux.
@@ -19,6 +19,16 @@ const SAMPLE_APPS: [(&str, &[&str]); 12] = [
     ("Task Manager", &["taskmgr", "processes"]),
     ("Terminal", &["wt", "console"]),
     ("Visual Studio Code", &["code", "editor"]),
+];
+
+/// Sample apps that can run as administrator, the way regular Windows programs can.
+const ELEVATING_APPS: [&str; 5] = ["Command Prompt", "Notepad", "PowerShell", "Task Manager", "Visual Studio Code"];
+
+/// Sample desktop entry actions by app name, the way Linux apps list them.
+const SAMPLE_DESKTOP_ACTIONS: [(&str, &str, &str); 3] = [
+    ("Microsoft Edge", "new-window", "New window"),
+    ("Microsoft Edge", "new-private-window", "New InPrivate window"),
+    ("Terminal", "new-tab", "New tab"),
 ];
 
 pub fn load() -> anyhow::Result<Vec<App>> {
@@ -49,6 +59,22 @@ fn placeholder_icon(name: &str) -> IconPixels {
 
 pub fn launch(app: &App) {
     eprintln!("preview mode: would launch {}", app.name);
+}
+
+/// Sample App Action Flyout entries mixing what both platforms offer.
+pub fn actions(app: &App) -> Vec<AppAction> {
+    let desktop_actions = SAMPLE_DESKTOP_ACTIONS
+        .iter()
+        .filter(|&&(name, _, _)| name == app.name)
+        .map(|&(_, id, name)| AppAction::Desktop { id: id.to_owned(), name: name.to_owned() });
+    let elevation: Option<AppAction> =
+        ELEVATING_APPS.contains(&app.name.as_str()).then_some(AppAction::RunAsAdministrator);
+
+    desktop_actions.chain(elevation).chain([AppAction::OpenFileLocation, AppAction::Uninstall]).collect()
+}
+
+pub fn perform_action(app: &App, action: &AppAction) {
+    eprintln!("preview mode: would run {:?} for {}", action.label(), app.name);
 }
 
 /// Placeholder guard so the host's startup code is identical on every platform.

@@ -12,7 +12,6 @@ use anyhow::Context;
 use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
 use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
-use crate::StartMenu;
 use crate::app_list::{Activation, AppList};
 use crate::apps::{self, App, IconPixels};
 use crate::backdrop::{self, MonitorRect};
@@ -23,6 +22,7 @@ use crate::settings;
 use crate::trace;
 use crate::trigger::{self, MenuKey, MenuKeyAction, MenuWinKeyTap};
 use crate::usage::{self, Usage};
+use crate::{StartMenu, action_flyout};
 
 const MATERIALIZE_DURATION: Duration = Duration::from_millis(180);
 const DEMATERIALIZE_DURATION: Duration = Duration::from_millis(100);
@@ -118,6 +118,7 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
         glass::install_rendering_notifier(start_menu, Rc::clone(&controller.glass_state));
     });
     settings::connect_callbacks(start_menu);
+    action_flyout::connect_callbacks(start_menu);
 
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
     start_menu.window().on_winit_window_event(move |_, event| {
@@ -168,7 +169,9 @@ pub fn connect_callbacks(start_menu: &StartMenu) {
 
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
     start_menu.on_toggle_pin(move |row| {
-        if let Some(start_menu) = weak_menu.upgrade() {
+        if let Some(start_menu) = weak_menu.upgrade()
+            && let Ok(row) = usize::try_from(row)
+        {
             toggle_pin(&start_menu, row);
         }
     });
@@ -520,7 +523,7 @@ fn perform_power_action(start_menu: &StartMenu, action: PowerAction) {
 
 /// Clears the swapchain to 0.0 opacity before hiding so the next open never flashes the previous
 /// frame.
-fn clear_and_hide(start_menu: &StartMenu) {
+pub fn clear_and_hide(start_menu: &StartMenu) {
     CONTROLLER.with(|cell| {
         let mut controller = cell.borrow_mut();
         set_progress(start_menu, &controller.glass_state, 0.0);
@@ -530,11 +533,8 @@ fn clear_and_hide(start_menu: &StartMenu) {
     start_animation_timer(start_menu);
 }
 
-fn toggle_pin(start_menu: &StartMenu, row: i32) {
-    let Ok(row) = usize::try_from(row) else {
-        return;
-    };
-
+/// Pins or unpins the app in `row` and keeps it selected.
+pub fn toggle_pin(start_menu: &StartMenu, row: usize) {
     if let Some(selected) = AppList::with(start_menu, |app_list| app_list.toggle_pin(row)).flatten() {
         start_menu.invoke_select_row(selected as i32);
     }

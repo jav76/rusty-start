@@ -228,8 +228,7 @@ impl AppList {
             Row::Header(_) => None,
             Row::App { position, .. } => {
                 let app: App = state.catalog.apps.get(position)?.clone();
-                state.catalog.usage.record_launch(&app.launch_id, usage::unix_now());
-                save(&state);
+                record_launch(&mut state, &app.launch_id);
                 Some(Activation::Launch(app))
             }
             Row::Power(action) if action.needs_confirmation() && state.confirming != Some(action) => {
@@ -243,6 +242,21 @@ impl AppList {
                 Some(Activation::Power(action))
             }
         }
+    }
+
+    /// The app listed in `row` and whether it is pinned, or `None` for headers and power actions.
+    pub fn app(&self, row: usize) -> Option<(App, bool)> {
+        let state = self.state.borrow();
+        let Row::App { position, .. } = *state.rows.get(row)? else {
+            return None;
+        };
+        let app: &App = state.catalog.apps.get(position)?;
+        Some((app.clone(), state.catalog.usage.is_pinned(&app.launch_id)))
+    }
+
+    /// Adds a launch of `launch_id` that did not go through `activate` to the history.
+    pub fn record_launch(&self, launch_id: &str) {
+        record_launch(&mut self.state.borrow_mut(), launch_id);
     }
 
     /// Pins or unpins the app in `row`. Returns the row to select afterwards, so keyboard focus
@@ -271,6 +285,11 @@ impl AppList {
         }
         self.notify.reset();
     }
+}
+
+fn record_launch(state: &mut State, launch_id: &str) {
+    state.catalog.usage.record_launch(launch_id, usage::unix_now());
+    save(state);
 }
 
 fn save(state: &State) {

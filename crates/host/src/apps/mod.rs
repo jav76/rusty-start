@@ -7,17 +7,17 @@
 #[cfg(backend_win32)]
 mod win32;
 #[cfg(backend_win32)]
-pub use win32::{AppWatcher, launch, load, load_icons, watch};
+pub use win32::{AppWatcher, actions, launch, load, load_icons, perform_action, watch};
 
 #[cfg(backend_linux)]
 mod linux;
 #[cfg(backend_linux)]
-pub use linux::{AppWatcher, launch, load, load_icons, watch};
+pub use linux::{AppWatcher, actions, launch, load, load_icons, perform_action, watch};
 
 #[cfg(backend_preview)]
 mod preview;
 #[cfg(backend_preview)]
-pub use preview::{AppWatcher, launch, load, load_icons, watch};
+pub use preview::{AppWatcher, actions, launch, load, load_icons, perform_action, watch};
 
 #[cfg(any(backend_linux, test))]
 mod desktop_entry;
@@ -27,6 +27,8 @@ mod exec;
 mod icon_theme;
 #[cfg(any(backend_linux, test))]
 mod raster;
+#[cfg(any(backend_win32, test))]
+mod shell_id;
 
 use slint::{Rgba8Pixel, SharedPixelBuffer};
 
@@ -59,35 +61,37 @@ impl Searchable for App {
     }
 }
 
-/// Program name of a launch ID that is a path to an `.exe`, such as `msedge` for
-/// `{6D809377-...}\Microsoft\Edge\Application\msedge.exe`, so apps are found by the name
-/// typed in Run dialogs. Packaged apps (AppUserModelIDs) have none.
-#[cfg(any(backend_win32, test))]
-pub fn exe_keyword(launch_id: &str) -> Option<String> {
-    let file_name: &str = launch_id.rsplit(['\\', '/']).next()?;
-    let (stem, extension) = file_name.rsplit_once('.')?;
-
-    (extension.eq_ignore_ascii_case("exe") && !stem.is_empty()).then(|| stem.to_owned())
+/// Something the App Action Flyout offers for an app besides pinning. Each backend lists the
+/// actions an app supports in flyout order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AppAction {
+    /// One of the desktop entry's own actions, such as "New Private Window", by its action ID.
+    #[cfg_attr(backend_win32, expect(dead_code, reason = "only desktop entries on Linux have their own actions"))]
+    Desktop {
+        id: String,
+        name: String,
+    },
+    RunAsAdministrator,
+    OpenFileLocation,
+    #[cfg_attr(
+        all(backend_linux, not(test)),
+        expect(dead_code, reason = "Linux has no uninstaller every desktop shares, so it never offers this")
+    )]
+    Uninstall,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exe_keyword_is_the_program_file_name_without_extension() {
-        assert_eq!(
-            exe_keyword("{6D809377-6AF0-444B-8957-A3773F02200E}\\Tools\\mspaint.EXE").as_deref(),
-            Some("mspaint")
-        );
-        assert_eq!(exe_keyword("C:/Apps/my.tool.exe").as_deref(), Some("my.tool"));
+impl AppAction {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Desktop { name, .. } => name,
+            Self::RunAsAdministrator => "Run as administrator",
+            Self::OpenFileLocation => "Open file location",
+            Self::Uninstall => "Uninstall",
+        }
     }
 
-    #[test]
-    fn packaged_apps_and_other_files_have_no_exe_keyword() {
-        assert_eq!(exe_keyword("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"), None);
-        assert_eq!(exe_keyword("Microsoft.Office.WINWORD.EXE.15"), None);
-        assert_eq!(exe_keyword("{GUID}\\Docs\\readme.txt"), None);
-        assert_eq!(exe_keyword("{GUID}\\.exe"), None);
+    /// Whether the action starts the app, so it counts as a launch in the history.
+    pub fn launches_app(&self) -> bool {
+        matches!(self, Self::Desktop { .. } | Self::RunAsAdministrator)
     }
 }
