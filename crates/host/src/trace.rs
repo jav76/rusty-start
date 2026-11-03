@@ -31,6 +31,6 @@ pub fn forget_search() {
 
 pub fn frame_rendered() {
     if let Some(changed_at) = SEARCH_CHANGED_AT.take() {
-        eprintln!("search frame {:.1} ms after the keystroke", changed_at.elapsed().as_secs_f64() * 1000.0);
+        log::info!("search frame {:.1} ms after the keystroke", changed_at.elapsed().as_secs_f64() * 1000.0);
     }
 }

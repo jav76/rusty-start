@@ -130,7 +130,7 @@ fn run_setup_task(start_menu: &StartMenu, task: SetupTask) {
         });
         if let Err(error) = delivered {
             SETUP_BUSY.store(false, Ordering::Release);
-            eprintln!("failed to deliver the setup audit: {error}");
+            log::error!("failed to deliver the setup audit: {error}");
         }
     });
 

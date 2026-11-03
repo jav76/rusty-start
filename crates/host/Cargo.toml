@@ -19,6 +19,7 @@ preview = []
 [dependencies]
 anyhow.workspace = true
 glow.workspace = true
+log.workspace = true
 rusty-start-protocol.workspace = true
 slint = { workspace = true, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "accessibility", "unstable-winit-030"] }
 
@@ -37,6 +38,7 @@ windows = { workspace = true, features = [
     "Win32_Graphics_Gdi",
     "Win32_Security",
     "Win32_System_Com",
+    "Win32_System_Console",
     "Win32_System_LibraryLoader",
     "Win32_System_Power",
     "Win32_System_Registry",

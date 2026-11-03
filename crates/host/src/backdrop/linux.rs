@@ -186,7 +186,7 @@ impl Capturer {
             self.awaited = None;
             return Some(result.map_err(|error| match error {
                 CaptureError::Unavailable(reason) => {
-                    eprintln!("the menu opens as Plain Glass this session: {reason}");
+                    log::warn!("the menu opens as Plain Glass this session: {reason}");
                     self.unavailable = true;
                     anyhow::Error::new(CaptureUnavailable)
                 }
@@ -209,7 +209,7 @@ impl CaptureWorker {
                     let result = capture_active_screen();
                     if trace && let Ok(snapshot) = &result {
                         let (width, height) = (snapshot.rect.width, snapshot.rect.height);
-                        eprintln!("captured {width}x{height} in {} ms", started_at.elapsed().as_millis());
+                        log::info!("captured {width}x{height} in {} ms", started_at.elapsed().as_millis());
                     }
                     if result_sender.send((sequence, result)).is_err() {
                         return;

@@ -198,7 +198,7 @@ impl Writer {
 
     pub fn save(&self, usage: &Usage) {
         if self.sender.send(Message::Save(usage.serialize())).is_err() {
-            eprintln!("failed to queue a usage save: the writer thread has exited");
+            log::error!("failed to queue a usage save: the writer thread has exited");
         }
     }
 }
@@ -227,7 +227,7 @@ fn run_writer(path: &Path, receiver: &Receiver<Message>) {
         }
 
         if let Err(error) = write_replacing(path, &contents) {
-            eprintln!("failed to save usage.tsv: {error:#}");
+            log::error!("failed to save usage.tsv: {error:#}");
         }
         if stop {
             break;

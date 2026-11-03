@@ -107,7 +107,7 @@ fn run_as_administrator(start_menu: &StartMenu, row: usize) {
     if apps::actions(&app).contains(&AppAction::RunAsAdministrator) {
         perform(start_menu, &app, &AppAction::RunAsAdministrator);
     } else {
-        eprintln!("{} cannot run as administrator", app.name);
+        log::warn!("{} cannot run as administrator", app.name);
     }
 }
 

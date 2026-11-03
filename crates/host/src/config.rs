@@ -342,7 +342,7 @@ impl Writer {
             .spawn(move || {
                 run_writer(&receiver, SAVE_DEBOUNCE, |config| {
                     if let Err(error) = write_replacing(&path, &config.to_toml()) {
-                        eprintln!("failed to save config.toml: {error:#}");
+                        log::error!("failed to save config.toml: {error:#}");
                     }
                 });
             })
@@ -353,7 +353,7 @@ impl Writer {
 
     pub fn save(&self, config: Config) {
         if self.sender.send(Message::Save(config)).is_err() {
-            eprintln!("failed to queue a config save: the writer thread has exited");
+            log::error!("failed to queue a config save: the writer thread has exited");
         }
     }
 }

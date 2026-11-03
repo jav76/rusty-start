@@ -89,7 +89,7 @@ fn log_first_visible_frame(state: &mut GlassState) {
         && state.progress > 0.0
         && let Some(shown_at) = state.shown_at.take()
     {
-        eprintln!(
+        log::info!(
             "first visible frame {:.1} ms after show, at progress {:.2}",
             shown_at.elapsed().as_secs_f64() * 1000.0,
             state.progress
@@ -120,7 +120,7 @@ pub fn install_rendering_notifier(start_menu: &StartMenu, state: Rc<RefCell<Glas
                     let gl = unsafe { Context::from_loader_function_cstr(|name| get_proc_address(name)) };
                     match GlassRenderer::new(gl) {
                         Ok(created) => renderer = Some(created),
-                        Err(error) => eprintln!("failed to initialize the Liquid-Glass GPU pipeline: {error:#}"),
+                        Err(error) => log::error!("failed to initialize the Liquid-Glass GPU pipeline: {error:#}"),
                     }
                 }
             }
@@ -151,7 +151,7 @@ pub fn install_rendering_notifier(start_menu: &StartMenu, state: Rc<RefCell<Glas
     });
 
     if let Err(error) = result {
-        eprintln!("unable to attach OpenGL rendering notifier: {error:?}");
+        log::error!("unable to attach OpenGL rendering notifier: {error:?}");
     }
 }
 
@@ -401,7 +401,7 @@ impl GlassRenderer {
             match BlurPyramid::create(&self.gl, width, height) {
                 Ok(created) => self.pyramid = Some(created),
                 Err(error) => {
-                    eprintln!("failed to allocate Dual-Kawase blur pyramid: {error:#}");
+                    log::error!("failed to allocate Dual-Kawase blur pyramid: {error:#}");
                     return;
                 }
             }

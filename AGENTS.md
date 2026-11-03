@@ -53,8 +53,10 @@ cargo test -p rusty-start-host --profile budget --locked -- --ignored
 - No `unwrap()` outside tests. `expect("...")` is allowed only for true invariants, and the
   message states the invariant (`"surface initialized above"`).
 - No `todo!()` or `unimplemented!()` in committed code. Return an error or leave the feature out.
-- Log recoverable failures once, where they are handled: `eprintln!("failed to X: {error:#}")`.
-  Never log and also return the same error.
+- Log recoverable failures once, where they are handled, through the `log` macros:
+  `log::warn!("failed to X: {error:#}")` when the host degrades, `log::error!` when something is
+  lost, `log::info!` for timings. Never `eprintln!` (the lint forbids it; `logging.rs` is the only
+  sink) and never log and also return the same error.
 - Library-style code with callers that match on errors (for example `crates/protocol`) uses a
   typed error enum instead of `anyhow`.
 

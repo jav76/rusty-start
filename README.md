@@ -175,7 +175,11 @@ Linux):
 On Linux the Meta key binding belongs to the desktop, so `use_win_key` has no effect there; use the
 Settings Page switch, `rusty-start setup` or `rusty-start setup --undo` instead.
 
-Pins and launch history are saved to `usage.tsv` in the same folder.
+Pins and launch history are saved to `usage.tsv` in the same folder. The host and `rusty-start setup`
+log warnings and errors to `rusty-start.log` there as well as to stderr, moving it to
+`rusty-start.log.1` once it passes 1 MiB; a panic is recorded there too. Set `RUSTY_START_LOG=debug`
+for more detail (`warn` or `error` for less). On Windows, `rusty-start setup` prints to the console it
+was started from and shows a message box when there is none.
 
 If another application already owns Ctrl+Alt+Space, the host logs a warning and keeps running. Other
 programs can toggle the menu by posting the `RustyStart.ToggleMenu` message to the

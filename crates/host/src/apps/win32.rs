@@ -117,7 +117,7 @@ pub fn load_icons(apps: &[App]) -> Result<Vec<(String, IconPixels)>> {
     }
 
     if let Some((name, error)) = first_failure {
-        eprintln!("failed to load icons for {failures} apps, which show a placeholder (first: {name}: {error:#})");
+        log::warn!("failed to load icons for {failures} apps, which show a placeholder (first: {name}: {error:#})");
     }
 
     Ok(icons)
@@ -228,12 +228,12 @@ pub fn launch(app: &App) {
 
     let spawned = thread::Builder::new().name("rusty-start-launch".into()).spawn(move || {
         if let Err(error) = shell_open(&target) {
-            eprintln!("failed to launch {name}: {error:#}");
+            log::error!("failed to launch {name}: {error:#}");
         }
     });
 
     if let Err(error) = spawned {
-        eprintln!("failed to spawn the launch thread: {error}");
+        log::error!("failed to spawn the launch thread: {error}");
     }
 }
 
@@ -250,12 +250,12 @@ pub fn perform_action(app: &App, action: &AppAction) {
 
     let spawned = thread::Builder::new().name("rusty-start-launch".into()).spawn(move || {
         if let Err(error) = perform(&launch_id, &action) {
-            eprintln!("failed to run {:?} for {name}: {error:#}", action.label());
+            log::error!("failed to run {:?} for {name}: {error:#}", action.label());
         }
     });
 
     if let Err(error) = spawned {
-        eprintln!("failed to spawn the launch thread: {error}");
+        log::error!("failed to spawn the launch thread: {error}");
     }
 }
 
@@ -466,7 +466,7 @@ fn run_watch_thread(on_change: impl Fn(Vec<App>), ready: &mpsc::Sender<Result<u3
             let _ = unsafe { KillTimer(Some(window.hwnd), DEBOUNCE_TIMER_ID) };
             match load() {
                 Ok(apps) => on_change(apps),
-                Err(error) => eprintln!("failed to rebuild the app list: {error:#}"),
+                Err(error) => log::error!("failed to rebuild the app list: {error:#}"),
             }
             continue;
         }

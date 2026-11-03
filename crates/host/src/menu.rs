@@ -86,7 +86,7 @@ impl MenuController {
         Self {
             config: Config::load(),
             config_writer: config::Writer::spawn()
-                .inspect_err(|error| eprintln!("settings changes will not be saved: {error:#}"))
+                .inspect_err(|error| log::error!("settings changes will not be saved: {error:#}"))
                 .ok(),
             capturer: backdrop::Capturer::default(),
             glass_state: Rc::new(RefCell::new(GlassState::default())),
@@ -102,7 +102,7 @@ impl MenuController {
 
 pub fn connect_callbacks(start_menu: &StartMenu) {
     let writer: Option<usage::Writer> = usage::Writer::spawn()
-        .inspect_err(|error| eprintln!("pins and launch history will not be saved: {error:#}"))
+        .inspect_err(|error| log::error!("pins and launch history will not be saved: {error:#}"))
         .ok();
     start_menu.set_rows(ModelRc::from(Rc::new(AppList::new(writer))));
 
@@ -249,10 +249,10 @@ pub fn load_apps_in_background(start_menu: &StartMenu) -> anyhow::Result<()> {
             let started_at: Instant = Instant::now();
             let usage: anyhow::Result<Usage> = usage::load();
             let apps: Vec<App> = apps::load()
-                .inspect_err(|error| eprintln!("failed to load the app list: {error:#}"))
+                .inspect_err(|error| log::error!("failed to load the app list: {error:#}"))
                 .unwrap_or_default();
             let power_actions: Vec<PowerAction> = power::available();
-            eprintln!("loaded the app index ({} apps) in {} ms", apps.len(), started_at.elapsed().as_millis());
+            log::info!("loaded the app index ({} apps) in {} ms", apps.len(), started_at.elapsed().as_millis());
             let icon_apps: Vec<App> = apps.clone();
 
             let delivered = weak_menu.upgrade_in_event_loop(move |start_menu| {
@@ -260,7 +260,7 @@ pub fn load_apps_in_background(start_menu: &StartMenu) -> anyhow::Result<()> {
                 set_power_actions(&start_menu, power_actions);
             });
             if let Err(error) = delivered {
-                eprintln!("failed to deliver the app list: {error}");
+                log::error!("failed to deliver the app list: {error}");
                 return;
             }
 
@@ -284,7 +284,7 @@ fn set_initial_data(start_menu: &StartMenu, apps: Vec<App>, usage: anyhow::Resul
         match usage {
             Ok(usage) => app_list.set_usage(usage),
             Err(error) => {
-                eprintln!("pins and launch history will not be saved this session: {error:#}");
+                log::error!("pins and launch history will not be saved this session: {error:#}");
                 app_list.disable_saving();
             }
         }
@@ -307,7 +307,7 @@ fn deliver_icons(weak_menu: &slint::Weak<StartMenu>, apps: &[App]) {
     let started_at: Instant = Instant::now();
     let icons: Vec<(String, IconPixels)> = match apps::load_icons(&missing) {
         Ok(icons) => {
-            eprintln!(
+            log::info!(
                 "rendered {} of {} app icons in {} ms",
                 icons.len(),
                 missing.len(),
@@ -316,7 +316,7 @@ fn deliver_icons(weak_menu: &slint::Weak<StartMenu>, apps: &[App]) {
             icons
         }
         Err(error) => {
-            eprintln!("failed to load app icons: {error:#}");
+            log::error!("failed to load app icons: {error:#}");
             return;
         }
     };
@@ -329,7 +329,7 @@ fn deliver_icons(weak_menu: &slint::Weak<StartMenu>, apps: &[App]) {
         AppList::with(&start_menu, |app_list| app_list.set_icons(icons));
     });
     if let Err(error) = delivered {
-        eprintln!("failed to deliver the app icons: {error}");
+        log::error!("failed to deliver the app icons: {error}");
     }
 }
 
@@ -339,10 +339,10 @@ pub fn watch_apps(start_menu: &StartMenu) -> anyhow::Result<apps::AppWatcher> {
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
 
     apps::watch(move |apps| {
-        eprintln!("rebuilt the app index ({} apps); it applies on the next show", apps.len());
+        log::info!("rebuilt the app index ({} apps); it applies on the next show", apps.len());
         let icon_apps: Vec<App> = apps.clone();
         if let Err(error) = weak_menu.upgrade_in_event_loop(move |_| queue_apps(apps)) {
-            eprintln!("failed to deliver the rebuilt app list: {error}");
+            log::error!("failed to deliver the rebuilt app list: {error}");
             return;
         }
         deliver_icons(&weak_menu, &icon_apps);
@@ -405,12 +405,12 @@ fn show(start_menu: &StartMenu) {
     });
 
     if let Err(error) = start_menu.show() {
-        eprintln!("failed to show the menu: {error}");
+        log::error!("failed to show the menu: {error}");
         return;
     }
 
     if !backdrop::focus_overlay_window() {
-        eprintln!("the menu could not take the foreground, so it has no keyboard focus");
+        log::warn!("the menu could not take the foreground, so it has no keyboard focus");
     }
 
     // Ensure keyboard focus is active at t = 0ms even before the 180ms condense finishes.
@@ -436,7 +436,7 @@ fn take_snapshot(controller: &mut MenuController) -> bool {
         }
         Err(error) => {
             if !error.is::<backdrop::CaptureUnavailable>() {
-                eprintln!("failed to capture the active monitor backdrop: {error:#}");
+                log::warn!("failed to capture the active monitor backdrop: {error:#}");
             }
             controller.glass_state.borrow_mut().plain = true;
         }
@@ -492,7 +492,7 @@ fn hide(start_menu: &StartMenu) {
     reset_search(start_menu);
 
     if let Err(error) = start_menu.hide() {
-        eprintln!("failed to hide the menu: {error}");
+        log::error!("failed to hide the menu: {error}");
     }
 }
 
@@ -617,7 +617,7 @@ fn tick_animation(start_menu: &StartMenu) {
                 if take_snapshot(&mut controller) {
                     controller.phase = Phase::Materializing { started_at: Instant::now() };
                 } else if started_at.elapsed() >= SNAPSHOT_WAIT {
-                    eprintln!(
+                    log::warn!(
                         "the desktop snapshot took over {} ms; opening as Plain Glass",
                         SNAPSHOT_WAIT.as_millis()
                     );

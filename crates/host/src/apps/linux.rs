@@ -130,7 +130,9 @@ pub fn load_icons(apps: &[App]) -> Result<Vec<(String, IconPixels)>> {
     }
 
     if let Some((launch_id, error)) = first_failure {
-        eprintln!("failed to load icons for {failures} apps, which show a placeholder (first: {launch_id}: {error:#})");
+        log::warn!(
+            "failed to load icons for {failures} apps, which show a placeholder (first: {launch_id}: {error:#})"
+        );
     }
     Ok(icons)
 }
@@ -216,7 +218,7 @@ pub fn perform_action(app: &App, action: &AppAction) {
             show_in_file_manager(&entry_file.path).with_context(|| format!("failed to show the file of {launch_id}"))
         }),
         AppAction::RunAsAdministrator | AppAction::Uninstall => {
-            eprintln!("{label} is not available on Linux, so {launch_id} was left alone");
+            log::warn!("{label} is not available on Linux, so {launch_id} was left alone");
         }
     }
 }
@@ -226,7 +228,7 @@ fn entry_file(app: &App) -> Option<EntryFile> {
     let entry_file: Option<EntryFile> =
         ENTRY_FILES.lock().unwrap_or_else(PoisonError::into_inner).get(&app.launch_id).cloned();
     if entry_file.is_none() {
-        eprintln!("failed to start {}: its desktop entry is no longer listed", app.name);
+        log::error!("failed to start {}: its desktop entry is no longer listed", app.name);
     }
     entry_file
 }
@@ -235,11 +237,11 @@ fn entry_file(app: &App) -> Option<EntryFile> {
 fn run_in_background(job: impl FnOnce() -> Result<()> + Send + 'static) {
     let spawned = thread::Builder::new().name("rusty-start-launch".into()).spawn(move || {
         if let Err(error) = job() {
-            eprintln!("{error:#}");
+            log::error!("{error:#}");
         }
     });
     if let Err(error) = spawned {
-        eprintln!("failed to spawn the launch thread: {error}");
+        log::error!("failed to spawn the launch thread: {error}");
     }
 }
 
@@ -252,7 +254,7 @@ fn launch_entry(launch_id: &str, path: &Path, target: Target<'_>) -> Result<()> 
         match activate_over_dbus(app_id, target) {
             Ok(()) => return Ok(()),
             Err(error) if target_exec(&entry, target).is_some() => {
-                eprintln!("D-Bus activation of {app_id} failed, running Exec: {error:#}");
+                log::warn!("D-Bus activation of {app_id} failed, running Exec: {error:#}");
             }
             Err(error) => return Err(error),
         }
@@ -261,7 +263,7 @@ fn launch_entry(launch_id: &str, path: &Path, target: Target<'_>) -> Result<()> 
     let argv: Vec<String> = command_line(&entry, target, &path.to_string_lossy())?;
     let mut child: Child = spawn_detached(&argv, entry.path.as_deref())?;
     if let Err(error) = move_into_scope(app_id, child.id()) {
-        eprintln!("{app_id} runs in the host's cgroup and stops with it: {error:#}");
+        log::warn!("{app_id} runs in the host's cgroup and stops with it: {error:#}");
     }
     let _ = child.wait();
     Ok(())
@@ -312,7 +314,7 @@ fn show_in_file_manager(file: &Path) -> Result<()> {
         return Ok(());
     };
 
-    eprintln!("no file manager can select {}, opening its folder instead: {error:#}", file.display());
+    log::warn!("no file manager can select {}, opening its folder instead: {error:#}", file.display());
     let folder: &Path = file.parent().context("the file has no folder")?;
     let mut child: Child = spawn_detached(&["xdg-open".to_owned(), folder.to_string_lossy().into_owned()], None)?;
     let _ = child.wait();
@@ -469,7 +471,7 @@ fn run_watcher(changes: &OwnedFd, stop: &OwnedFd, on_change: &impl Fn(Vec<App>))
             Ok(Readable::Changes) => {}
             Ok(Readable::Stop) => return,
             Err(error) => {
-                eprintln!("installed apps will not refresh until restart: {error:#}");
+                log::warn!("installed apps will not refresh until restart: {error:#}");
                 return;
             }
         }
@@ -486,7 +488,7 @@ fn run_watcher(changes: &OwnedFd, stop: &OwnedFd, on_change: &impl Fn(Vec<App>))
 
         match load() {
             Ok(apps) => on_change(apps),
-            Err(error) => eprintln!("failed to rebuild the app list: {error:#}"),
+            Err(error) => log::error!("failed to rebuild the app list: {error:#}"),
         }
     }
 }

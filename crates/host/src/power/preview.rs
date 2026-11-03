@@ -6,5 +6,5 @@ pub fn available() -> Vec<PowerAction> {
 }
 
 pub fn perform(action: PowerAction) {
-    eprintln!("preview mode: would {}", action.label().to_lowercase());
+    log::info!("preview mode: would {}", action.label().to_lowercase());
 }
