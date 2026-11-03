@@ -98,7 +98,9 @@ reports the value as pointing at another copy, and Install updates it.
 ## Installing on Linux
 
 Releases ship a `.deb` and a `.tar.gz` for amd64 and arm64. The package installs `/usr/bin/rusty-start`,
-its desktop entry and a D-Bus service file, so a Meta tap starts the host when it is not running.
+its desktop entry and a D-Bus service file, so a `Toggle()` call on the session bus starts the host
+when it is not running. The Meta key reaches the host only while it runs; the autostart entry that
+`rusty-start setup` adds starts it with the session.
 
 ```
 sudo apt install ./rusty-start_*.deb
@@ -215,7 +217,12 @@ CI runs in a `debian:bookworm` container on a self-hosted Linux runner for every
 every pull request, and lints the Windows backend with cross-target clippy. Tagged releases build
 on the same runner: Linux amd64 natively, Linux arm64 by cross-linking against Debian's multiarch
 libraries, and Windows x64 and arm64 with [cargo-xwin](https://github.com/rust-cross/cargo-xwin).
-Cross-built binaries are not run in CI. Run the same checks locally before opening a PR:
+Cross-built binaries are not run in CI. A release tag must equal the version in `Cargo.toml` and
+have a section in [CHANGELOG.md](CHANGELOG.md); the workflow refuses it otherwise, takes the notes
+from that section, marks tags with a pre-release suffix (`v0.2.0-beta.1`) as pre-releases and adds
+`SHA256SUMS` once every asset is uploaded. To release: bump `version` in `Cargo.toml`, move the
+Unreleased entries into a new changelog section, merge, then push the tag. Run the same checks
+locally before opening a PR:
 
 ```
 cargo fmt --all -- --check
