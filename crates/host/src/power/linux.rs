@@ -5,7 +5,6 @@
 //! because ending the session through logind closes apps without asking them.
 
 use std::sync::OnceLock;
-use std::thread;
 
 use anyhow::{Context, Result};
 use zbus::blocking::Connection;
@@ -39,18 +38,6 @@ struct Capabilities {
 /// it off the UI thread.
 pub fn available() -> Vec<PowerAction> {
     available_actions(capabilities())
-}
-
-/// Runs `action` on a short-lived thread, because the calls block on D-Bus replies.
-pub fn perform(action: PowerAction) {
-    let spawned = thread::Builder::new().name("rusty-start-power".into()).spawn(move || {
-        if let Err(error) = run(action) {
-            log::error!("failed to {}: {error:#}", action.label().to_lowercase());
-        }
-    });
-    if let Err(error) = spawned {
-        log::error!("failed to spawn the power action thread: {error}");
-    }
 }
 
 fn available_actions(capabilities: Capabilities) -> Vec<PowerAction> {
@@ -108,7 +95,8 @@ fn logind_allows(connection: &Connection, method: &str) -> bool {
         .is_some_and(|answer| answer == "yes" || answer == "challenge")
 }
 
-fn run(action: PowerAction) -> Result<()> {
+/// Performs `action`. Blocks on D-Bus replies, so `power::perform` calls it off the UI thread.
+pub fn run(action: PowerAction) -> Result<()> {
     let session_manager: Option<SessionManager> = capabilities().session_manager;
     match (action, session_manager) {
         (PowerAction::Lock, _) => call_system(OWN_SESSION_PATH, "org.freedesktop.login1.Session", "Lock", None),

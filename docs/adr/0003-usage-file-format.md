@@ -40,6 +40,14 @@ On Linux the launch ID is the desktop file ID from the Desktop Entry specificati
 or newlines, so the format is unchanged and needs no version bump. A file is never shared between
 platforms, so the two kinds of ID never mix.
 
+## Amendment (2026-11-03): damaged files are moved aside
+
+A file that cannot be read or parsed is renamed to `usage.tsv.broken-<timestamp>` next to it, the
+reason is logged, and a new history starts, so pins keep saving in every later session. Only when
+the rename itself fails does the host fall back to the in-memory rule above. `config.toml` gets the
+same treatment, and saving it now rewrites only the keys the host owns, keeping comments and keys
+it does not know.
+
 ## Consequences
 
 - No new dependency, and the format is easy to read and edit by hand.
