@@ -131,6 +131,62 @@ pub fn entry_state(existing: Option<&str>, expected: &str) -> (ItemState, &'stat
     }
 }
 
+/// Interface a desktop entry must list under `X-KDE-DBUS-Restricted-Interfaces` for KWin to share
+/// desktop snapshots with its executable.
+pub const SCREENSHOT_INTERFACE: &str = "org.kde.KWin.ScreenShot2";
+
+/// The program a desktop entry runs: the first word of its `Exec` line, unquoted.
+pub fn entry_exec(contents: &str) -> Option<String> {
+    let value: &str = contents.lines().find_map(|line| line.strip_prefix("Exec="))?.trim();
+    // The value is a string value first, whose escaping doubled every backslash.
+    let unescaped: String = value.replace("\\\\", "\\");
+    let Some(quoted) = unescaped.strip_prefix('"') else {
+        return unescaped.split_whitespace().next().map(str::to_owned);
+    };
+    let mut program = String::with_capacity(quoted.len());
+    let mut characters = quoted.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '"' => break,
+            '\\' => program.extend(characters.next()),
+            other => program.push(other),
+        }
+    }
+    Some(program)
+}
+
+/// Whether KWin will share desktop snapshots with `executable`, judged from the desktop entry the
+/// service cache resolves for the app ID (`None` when there is none).
+pub fn snapshot_authorization(executable: &Path, entry: Option<&str>) -> (ItemState, String) {
+    let Some(contents) = entry else {
+        return (
+            ItemState::Missing,
+            "no desktop entry authorizes this build; install the .deb or run `rusty-start setup --dev`".to_owned(),
+        );
+    };
+    let lists_interface: bool = contents
+        .lines()
+        .filter_map(|line| line.strip_prefix("X-KDE-DBUS-Restricted-Interfaces="))
+        .any(|interfaces| interfaces.split(',').any(|interface| interface.trim() == SCREENSHOT_INTERFACE));
+    match entry_exec(contents) {
+        Some(program) if Path::new(&program) == executable => {
+            if lists_interface {
+                (ItemState::Installed, "KWin shares desktop snapshots with this build".to_owned())
+            } else {
+                (ItemState::Conflict, format!("the desktop entry does not list {SCREENSHOT_INTERFACE}"))
+            }
+        }
+        Some(program) if contents.lines().any(|line| line == SETUP_MARKER) => {
+            (ItemState::Conflict, format!("a development entry for {program} masks this build; Install removes it"))
+        }
+        Some(program) => (
+            ItemState::Conflict,
+            format!("the desktop entry runs {program}, not this build; run `rusty-start setup --dev` for this build"),
+        ),
+        None => (ItemState::Conflict, "the desktop entry has no Exec line".to_owned()),
+    }
+}
+
 /// Quotes a program path for `Exec` when it contains characters the specification reserves.
 fn quote_exec(program: &str) -> String {
     let reserved = |character: char| character.is_whitespace() || "\"'\\><~|&;$*?#()`".contains(character);
@@ -227,5 +283,40 @@ mod tests {
         assert!(entry.contains("Exec=\"/home/me/My Builds/rusty-start\"\n"));
 
         assert_eq!(quote_exec("/opt/a$b"), "\"/opt/a\\\\$b\"");
+    }
+
+    #[test]
+    fn the_program_of_an_entry_round_trips_through_quoting() {
+        for program in ["/usr/bin/rusty-start", "/home/me/My Builds/rusty-start", "/opt/a$b", "/tmp/q\"uote"] {
+            let entry = desktop_entry(&PathBuf::from(program), EntryKind::Development);
+            assert_eq!(entry_exec(&entry).as_deref(), Some(program), "{program}");
+        }
+        assert_eq!(
+            entry_exec("[Desktop Entry]\nExec=/usr/bin/rusty-start --flag %u\n").as_deref(),
+            Some("/usr/bin/rusty-start")
+        );
+        assert_eq!(entry_exec("[Desktop Entry]\nName=x\n"), None);
+    }
+
+    #[test]
+    fn snapshot_authorization_follows_the_entry_that_masks_the_rest() {
+        let installed = PathBuf::from("/usr/bin/rusty-start");
+        let packaged = "[Desktop Entry]\nType=Application\nExec=/usr/bin/rusty-start\nNoDisplay=true\n\
+                        X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2\n";
+        let development = desktop_entry(&PathBuf::from("/home/me/target/debug/rusty-start"), EntryKind::Development);
+
+        assert_eq!(snapshot_authorization(&installed, None).0, ItemState::Missing);
+        assert_eq!(snapshot_authorization(&installed, Some(packaged)).0, ItemState::Installed);
+
+        let (state, detail) = snapshot_authorization(&installed, Some(&development));
+        assert_eq!(state, ItemState::Conflict);
+        assert!(detail.contains("/home/me/target/debug/rusty-start masks"), "{detail}");
+
+        let (state, detail) = snapshot_authorization(&PathBuf::from("/home/me/other/rusty-start"), Some(packaged));
+        assert_eq!(state, ItemState::Conflict);
+        assert!(detail.contains("setup --dev"), "{detail}");
+
+        let unlisted = "[Desktop Entry]\nExec=/usr/bin/rusty-start\n";
+        assert_eq!(snapshot_authorization(&installed, Some(unlisted)).0, ItemState::Conflict);
     }
 }

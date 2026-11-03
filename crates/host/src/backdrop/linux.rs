@@ -15,6 +15,7 @@ use std::fs::File;
 use std::io::Read;
 use std::os::fd::{AsFd, OwnedFd};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::{Mutex, PoisonError};
 use std::thread;
 
 use anyhow::{Context, Result, bail};
@@ -26,6 +27,40 @@ use zbus::zvariant::{Fd, OwnedValue, Value};
 
 use super::{CaptureUnavailable, MonitorRect, MonitorSnapshot, kwin_image, plasma_shell};
 use crate::dbus;
+use crate::setup::{ItemState, SetupItem};
+
+/// Outcome of the latest capture, for the Setup Audit's runtime row.
+static LAST_CAPTURE: Mutex<CaptureOutcome> = Mutex::new(CaptureOutcome::NotTried);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CaptureOutcome {
+    NotTried,
+    Captured,
+    Unavailable(String),
+    Failed(String),
+}
+
+fn record_outcome(outcome: CaptureOutcome) {
+    *LAST_CAPTURE.lock().unwrap_or_else(PoisonError::into_inner) = outcome;
+}
+
+/// Read-only Setup Audit row: what the latest desktop snapshot attempt came to, which is the
+/// runtime truth behind a menu that opens as Plain Glass.
+pub fn status_items() -> Vec<SetupItem> {
+    const LABEL: &str = "Desktop snapshots";
+    let outcome: CaptureOutcome = LAST_CAPTURE.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    let item: SetupItem = match outcome {
+        CaptureOutcome::NotTried => SetupItem::new(LABEL, ItemState::Unavailable, "not captured yet this session"),
+        CaptureOutcome::Captured => SetupItem::new(LABEL, ItemState::Installed, "captured through KWin"),
+        CaptureOutcome::Unavailable(reason) => {
+            SetupItem::new(LABEL, ItemState::Conflict, format!("Plain Glass: {reason}"))
+        }
+        CaptureOutcome::Failed(error) => {
+            SetupItem::new(LABEL, ItemState::Conflict, format!("last capture failed: {error}"))
+        }
+    };
+    vec![item]
+}
 
 /// Layout size until the compositor reports the fullscreen size.
 const PLACEHOLDER_RECT: MonitorRect = MonitorRect { x: 0, y: 0, width: 1920, height: 1080 };
@@ -184,13 +219,20 @@ impl Capturer {
                 continue;
             }
             self.awaited = None;
+            if result.is_ok() {
+                record_outcome(CaptureOutcome::Captured);
+            }
             return Some(result.map_err(|error| match error {
                 CaptureError::Unavailable(reason) => {
                     log::warn!("the menu opens as Plain Glass this session: {reason}");
                     self.unavailable = true;
+                    record_outcome(CaptureOutcome::Unavailable(reason));
                     anyhow::Error::new(CaptureUnavailable)
                 }
-                CaptureError::Failed(error) => error,
+                CaptureError::Failed(error) => {
+                    record_outcome(CaptureOutcome::Failed(format!("{error:#}")));
+                    error
+                }
             }));
         }
     }
