@@ -6,3 +6,8 @@ pub struct InstanceGuard;
 pub fn acquire() -> anyhow::Result<Option<InstanceGuard>> {
     Ok(Some(InstanceGuard))
 }
+
+/// Preview builds never share a host, so there is nobody to send to.
+pub fn send(_request: super::HostRequest) -> anyhow::Result<bool> {
+    Ok(false)
+}

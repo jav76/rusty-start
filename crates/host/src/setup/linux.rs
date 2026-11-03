@@ -76,7 +76,7 @@ pub fn undo(options: Options, changes: &mut Vec<String>) -> Result<()> {
     remove_marked_file(&development_entry_path()?, "the development desktop entry", changes)?;
     refresh_service_cache();
     if !options.from_host {
-        changes.push("Done. Stop a running host with `pkill -x rusty-start`.".to_owned());
+        changes.push("Done. Stop a running host with `rusty-start quit`.".to_owned());
     }
     Ok(())
 }

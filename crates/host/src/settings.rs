@@ -1,5 +1,5 @@
-//! The Settings Page: Card Anchor, Veil Mode, blur strength, the Meta key switch and the Setup
-//! Audit. Every function here runs on the UI thread. Setup audits and changes touch the desktop, so
+//! The Settings Page: Card Anchor, Veil Mode, blur strength, the Meta key switch, the Setup
+//! Audit, the version and Quit. Every function here runs on the UI thread. Setup audits and changes touch the desktop, so
 //! they run on the `rusty-start-setup` thread and hand their results back with
 //! `upgrade_in_event_loop`.
 
@@ -38,6 +38,8 @@ struct SetupReport {
 
 pub fn connect_callbacks(start_menu: &StartMenu) {
     start_menu.set_meta_key_label(META_KEY_LABEL.into());
+    start_menu.set_version(format!("Rusty Start {}", env!("CARGO_PKG_VERSION")).into());
+    start_menu.on_quit(menu::quit);
 
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
     start_menu.on_open_settings(move || {
@@ -155,7 +157,7 @@ fn perform(task: SetupTask) -> SetupReport {
     let message: String = match (task, result) {
         (_, Err(error)) => format!("{error:#}"),
         (SetupTask::Install, Ok(())) => "Setup installed.".to_owned(),
-        (SetupTask::Undo, Ok(())) => "Setup undone. Rusty Start keeps running until you stop it.".to_owned(),
+        (SetupTask::Undo, Ok(())) => "Setup undone. Rusty Start keeps running until you quit it below.".to_owned(),
         (SetupTask::Audit | SetupTask::SetMetaKey(_), Ok(())) => String::new(),
     };
 

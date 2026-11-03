@@ -1,5 +1,6 @@
 #![expect(clippy::unnecessary_wraps, reason = "signatures match the fallible win32 backend")]
 
+use super::TriggerEvent;
 use crate::setup::{ItemState, SetupItem};
 
 /// Nothing else watches the Windows key in preview builds, so the menu window closes on its tap.
@@ -12,8 +13,8 @@ pub fn suppress_native_start_menu() {}
 pub struct TriggerGuard;
 
 /// Opens the menu once. The toggle is queued and runs when the event loop starts.
-pub fn install(on_toggle: impl Fn() + Send + 'static) -> anyhow::Result<TriggerGuard> {
-    on_toggle();
+pub fn install(on_event: impl Fn(TriggerEvent) + Send + 'static) -> anyhow::Result<TriggerGuard> {
+    on_event(TriggerEvent::Toggle);
     Ok(TriggerGuard)
 }
 

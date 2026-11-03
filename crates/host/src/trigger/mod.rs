@@ -1,7 +1,7 @@
-//! Decides when the menu opens.
+//! Decides when the menu opens, and hears the request to stop the host.
 //!
-//! On Windows a hidden window listens for the Windows key, a development hotkey and the toggle
-//! message other processes post. On Linux the host serves a D-Bus interface that compositor
+//! On Windows a hidden window listens for the Windows key, a development hotkey and the toggle and
+//! quit messages other processes post. On Linux the host serves a D-Bus interface that compositor
 //! bindings and second launches call. Preview builds have no global trigger, so the menu opens
 //! once at startup to allow UI iteration.
 
@@ -17,7 +17,7 @@ pub use win32::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, set_win_key, status
 mod linux;
 /// Linux only: the instance lock serves the interface before it claims the bus name.
 #[cfg(backend_linux)]
-pub use linux::serve_toggle_interface;
+pub use linux::serve_host_interface;
 #[cfg(backend_linux)]
 pub use linux::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, set_win_key, status_items, suppress_native_start_menu};
 
@@ -25,6 +25,17 @@ pub use linux::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, set_win_key, status
 mod preview;
 #[cfg(backend_preview)]
 pub use preview::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, set_win_key, status_items, suppress_native_start_menu};
+
+/// What a trigger asks the host to do. Delivered on the trigger's own thread, never the UI thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TriggerEvent {
+    Toggle,
+    #[cfg_attr(
+        backend_preview,
+        expect(dead_code, reason = "preview builds have no trigger that asks the host to quit")
+    )]
+    Quit,
+}
 
 /// A key event seen by the menu window while it has keyboard focus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
