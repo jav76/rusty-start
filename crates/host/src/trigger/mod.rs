@@ -7,6 +7,9 @@
 
 #[cfg(backend_win32)]
 mod win32;
+/// Pure tap detection for the Windows backend, compiled everywhere so its tests run in CI.
+#[cfg(any(backend_win32, test))]
+mod win_key_chord;
 #[cfg(backend_win32)]
 pub use win32::{MENU_HANDLES_WIN_KEY, TriggerGuard, install, set_win_key, status_items, suppress_native_start_menu};
 

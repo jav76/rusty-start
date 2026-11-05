@@ -6,30 +6,38 @@
 //! When `use_win_key` is enabled in `config.toml` (the default), the trigger thread also installs a
 //! `WH_KEYBOARD_LL` hook that opens `rusty-start` on a solo Windows-key tap (`VK_LWIN` / `VK_RWIN`
 //! released without any other key pressed) while preserving all `Win+<Key>` system shortcuts.
+//! The tap logic lives in `win_key_chord.rs`; this file feeds it key events, the live modifier
+//! state and session lock changes, after which key releases have usually gone missing.
 //! The Settings Page turns the hook on and off at runtime through `set_win_key`.
 
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use rusty_start_protocol::{MESSAGE_WINDOW_CLASS, TOGGLE_MESSAGE_NAME};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::RemoteDesktop::{
+    NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification, WTSUnRegisterSessionNotification,
+};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
-    RegisterHotKey, SendInput, UnregisterHotKey, VK_LWIN, VK_NONAME, VK_RWIN, VK_SPACE,
+    GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOD_ALT,
+    MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, SendInput, UnregisterHotKey, VK_NONAME, VK_SPACE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, HC_ACTION, HHOOK,
     KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLKHF_UP, MSG, PostMessageW, PostThreadMessageW, RegisterClassExW,
     RegisterWindowMessageW, SetWindowsHookExW, UnhookWindowsHookEx, UnregisterClassW, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSEXW,
+    WINDOW_STYLE, WM_APP, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_WTSSESSION_CHANGE,
+    WNDCLASSEXW, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
 };
 use windows::core::{HSTRING, PCWSTR};
 
+use super::win_key_chord::{WinKeyChord, modifiers_held};
 use crate::config::Config;
 use crate::setup::{ItemState, SetupItem};
 
@@ -112,67 +120,6 @@ struct HookState {
 impl HookState {
     const fn new() -> Self {
         Self { hwnd: HWND(std::ptr::null_mut()), toggle_message: 0, chord: WinKeyChord::new() }
-    }
-}
-
-/// Tracks whether `VK_LWIN` or `VK_RWIN` was tapped alone without any modifier or chord key.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct WinKeyChord {
-    win_held: bool,
-    chord_interrupted: bool,
-    held_modifiers: u16,
-}
-
-impl WinKeyChord {
-    const fn new() -> Self {
-        Self { win_held: false, chord_interrupted: false, held_modifiers: 0 }
-    }
-
-    /// Processes a non-injected key event and returns `true` when a solo Windows key tap completes
-    /// on key release.
-    fn on_key_event(&mut self, vk: u16, is_key_up: bool) -> bool {
-        if vk == VK_LWIN.0 || vk == VK_RWIN.0 {
-            if !is_key_up {
-                if !self.win_held {
-                    self.win_held = true;
-                    self.chord_interrupted = self.held_modifiers != 0;
-                }
-                false
-            } else {
-                let should_toggle: bool = self.win_held && !self.chord_interrupted;
-                self.win_held = false;
-                self.chord_interrupted = false;
-                should_toggle
-            }
-        } else {
-            if let Some(bit) = modifier_bit(vk) {
-                if is_key_up {
-                    self.held_modifiers &= !bit;
-                } else {
-                    self.held_modifiers |= bit;
-                }
-            }
-
-            if self.win_held {
-                self.chord_interrupted = true;
-            }
-            false
-        }
-    }
-}
-
-const fn modifier_bit(vk: u16) -> Option<u16> {
-    match vk {
-        0x10 => Some(1 << 0), // VK_SHIFT
-        0x11 => Some(1 << 1), // VK_CONTROL
-        0x12 => Some(1 << 2), // VK_MENU (Alt)
-        0xA0 => Some(1 << 3), // VK_LSHIFT
-        0xA1 => Some(1 << 4), // VK_RSHIFT
-        0xA2 => Some(1 << 5), // VK_LCONTROL
-        0xA3 => Some(1 << 6), // VK_RCONTROL
-        0xA4 => Some(1 << 7), // VK_LMENU
-        0xA5 => Some(1 << 8), // VK_RMENU
-        _ => None,
     }
 }
 
@@ -273,6 +220,8 @@ struct TriggerWindow {
     hwnd: HWND,
     toggle_message: u32,
     keyboard_hook: Option<HHOOK>,
+    /// Whether the window receives `WM_WTSSESSION_CHANGE`, so a lock or unlock resets the tap.
+    session_notifications: bool,
     // Declared last so the class is unregistered only after Drop has destroyed the window.
     _class: WindowClass,
 }
@@ -288,7 +237,8 @@ impl TriggerWindow {
         });
 
         let keyboard_hook: Option<HHOOK> = if Config::load().use_win_key { install_keyboard_hook() } else { None };
-        let window = Self { hwnd, toggle_message, keyboard_hook, _class: class };
+        let session_notifications: bool = register_session_notifications(hwnd);
+        let window = Self { hwnd, toggle_message, keyboard_hook, session_notifications, _class: class };
 
         // SAFETY: `window.hwnd` is a live window owned by this thread.
         let hotkey = unsafe {
@@ -342,6 +292,9 @@ impl Drop for TriggerWindow {
             if let Some(hook) = self.keyboard_hook.take() {
                 let _ = UnhookWindowsHookEx(hook);
             }
+            if self.session_notifications {
+                let _ = WTSUnRegisterSessionNotification(self.hwnd);
+            }
             let _ = UnregisterHotKey(Some(self.hwnd), DEV_HOTKEY_ID);
             let _ = DestroyWindow(self.hwnd);
         }
@@ -365,6 +318,26 @@ fn install_keyboard_hook() -> Option<HHOOK> {
     }
 }
 
+/// Asks for `WM_WTSSESSION_CHANGE` on the trigger window. Not fatal: without it a tap after Win+L
+/// still recovers through the stale-hold timeout in `WinKeyChord`.
+fn register_session_notifications(hwnd: HWND) -> bool {
+    // SAFETY: `hwnd` is a live window owned by this thread, and Drop unregisters it.
+    match unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) } {
+        Ok(()) => true,
+        Err(error) => {
+            log::warn!("session lock changes will not reset the Windows-key tap: {error}");
+            false
+        }
+    }
+}
+
+/// Reads which modifiers the keyboard reports held right now, so a release the hook never saw
+/// (Win+L, the secure desktop) cannot leave a modifier stuck in the tap tracker.
+fn live_modifiers() -> u16 {
+    // SAFETY: GetAsyncKeyState has no preconditions.
+    modifiers_held(|vk| unsafe { GetAsyncKeyState(i32::from(vk)) } as u16 & 0x8000 != 0)
+}
+
 /// Low-level keyboard hook that detects a solo Windows-key tap (`VK_LWIN` / `VK_RWIN`), injects a
 /// silent `VK_NONAME` key event so `explorer.exe` suppresses the built-in Windows 11 Start menu,
 /// and posts the toggle message to `TriggerWindow`.
@@ -383,7 +356,7 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
 
                 let should_toggle: Option<(HWND, u32)> = HOOK_STATE.with(|cell| {
                     let mut state = cell.get();
-                    let triggered = state.chord.on_key_event(vk, is_key_up);
+                    let triggered = state.chord.on_key_event(vk, is_key_up, Instant::now(), live_modifiers);
                     cell.set(state);
                     triggered.then_some((state.hwnd, state.toggle_message))
                 });
@@ -496,59 +469,18 @@ fn register_toggle_message() -> Result<u32> {
     Ok(message_id)
 }
 
-/// Stateless window procedure. Trigger messages are handled in `run_message_loop`.
+/// Window procedure. Trigger messages are handled in `run_message_loop`; a session lock or unlock
+/// resets the tap tracker here, on the trigger thread that owns it, because the key releases that
+/// happened on the lock screen were never delivered to the hook.
 extern "system" fn window_procedure(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if message == WM_WTSSESSION_CHANGE && matches!(wparam.0 as u32, WTS_SESSION_LOCK | WTS_SESSION_UNLOCK) {
+        HOOK_STATE.with(|cell| {
+            let mut state = cell.get();
+            state.chord.reset();
+            cell.set(state);
+        });
+        return LRESULT(0);
+    }
     // SAFETY: forwards the arguments Windows passed to this procedure unchanged.
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const LWIN: u16 = VK_LWIN.0;
-    const RWIN: u16 = VK_RWIN.0;
-    const KEY_R: u16 = 0x52;
-    const LCTRL: u16 = 0xA2;
-
-    #[test]
-    fn solo_windows_key_tap_triggers_on_release() {
-        let mut chord = WinKeyChord::new();
-
-        assert!(!chord.on_key_event(LWIN, false));
-        assert!(chord.on_key_event(LWIN, true));
-    }
-
-    #[test]
-    fn auto_repeated_solo_windows_key_still_triggers_on_release() {
-        let mut chord = WinKeyChord::new();
-
-        assert!(!chord.on_key_event(RWIN, false));
-        assert!(!chord.on_key_event(RWIN, false));
-        assert!(chord.on_key_event(RWIN, true));
-    }
-
-    #[test]
-    fn win_plus_key_chord_does_not_trigger_menu() {
-        let mut chord = WinKeyChord::new();
-
-        assert!(!chord.on_key_event(LWIN, false));
-        assert!(!chord.on_key_event(KEY_R, false));
-        assert!(!chord.on_key_event(KEY_R, true));
-        assert!(!chord.on_key_event(LWIN, true));
-    }
-
-    #[test]
-    fn holding_modifier_before_pressing_win_does_not_trigger_menu() {
-        let mut chord = WinKeyChord::new();
-
-        assert!(!chord.on_key_event(LCTRL, false));
-        assert!(!chord.on_key_event(LWIN, false));
-        assert!(!chord.on_key_event(LWIN, true));
-        assert!(!chord.on_key_event(LCTRL, true));
-
-        // Subsequent solo tap after releasing Ctrl works normally.
-        assert!(!chord.on_key_event(LWIN, false));
-        assert!(chord.on_key_event(LWIN, true));
-    }
 }
