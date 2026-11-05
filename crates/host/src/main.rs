@@ -5,6 +5,7 @@ mod action_flyout;
 mod app_list;
 mod apps;
 mod backdrop;
+mod cli;
 mod config;
 #[cfg(backend_linux)]
 mod dbus;
@@ -39,15 +40,37 @@ fn main() -> ExitCode {
 
 fn run() -> anyhow::Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(("setup", setup_arguments)) = arguments.split_first().map(|(first, rest)| (first.as_str(), rest)) {
-        let report: String = setup::run(setup_arguments)?;
-        logging::print_report(&report);
-        return Ok(());
+    match cli::parse(&arguments).map_err(anyhow::Error::msg)? {
+        cli::Command::Run => run_host(),
+        cli::Command::Setup(setup_arguments) => {
+            let report: String = setup::run(&setup_arguments)?;
+            logging::print_report(&report);
+            Ok(())
+        }
+        cli::Command::Toggle => send_to_host(instance::HostRequest::Toggle),
+        cli::Command::Quit => send_to_host(instance::HostRequest::Quit),
+        cli::Command::Version => {
+            logging::print_report(&cli::version_text());
+            Ok(())
+        }
+        cli::Command::Help => {
+            logging::print_report(cli::help_text());
+            Ok(())
+        }
     }
+}
 
+fn send_to_host(request: instance::HostRequest) -> anyhow::Result<()> {
+    if !instance::send(request)? {
+        anyhow::bail!("Rusty Start is not running");
+    }
+    Ok(())
+}
+
+fn run_host() -> anyhow::Result<()> {
     let Some(_instance): Option<instance::InstanceGuard> = instance::acquire()? else {
-        log::info!("Rusty Start is already running; toggled its menu instead");
-        return Ok(());
+        log::info!("Rusty Start is already running; toggling its menu instead");
+        return send_to_host(instance::HostRequest::Toggle);
     };
 
     let _overlay_owner: backdrop::OverlayOwner = backdrop::install_backend()?;
@@ -59,10 +82,13 @@ fn run() -> anyhow::Result<()> {
         .ok();
 
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
-    let _trigger: trigger::TriggerGuard = trigger::install(move || {
-        let queued = weak_menu.upgrade_in_event_loop(|start_menu| menu::toggle(&start_menu));
+    let _trigger: trigger::TriggerGuard = trigger::install(move |event| {
+        let queued = match event {
+            trigger::TriggerEvent::Toggle => weak_menu.upgrade_in_event_loop(|start_menu| menu::toggle(&start_menu)),
+            trigger::TriggerEvent::Quit => slint::invoke_from_event_loop(menu::quit),
+        };
         if let Err(error) = queued {
-            log::error!("failed to queue a menu toggle: {error}");
+            log::error!("failed to queue a {event:?}: {error}");
         }
     })?;
 

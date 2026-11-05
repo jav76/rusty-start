@@ -1,12 +1,12 @@
 //! Linux trigger: the host's D-Bus interface on the session bus, and its KDE global shortcut.
 //!
-//! Desktop bindings call `Toggle()`, and a second `rusty-start` launch calls
-//! `ToggleWithToken(token)`. On KDE Plasma the host also registers a kglobalaccel action, which
-//! `rusty-start setup` binds to the Meta key, and listens for its presses on the
-//! `rusty-start-shortcut` thread. Toggles arrive on those threads, so `on_toggle` must hand the work
+//! Desktop bindings call `Toggle()`, a second `rusty-start` launch calls `ToggleWithToken(token)`
+//! and `rusty-start quit` calls `Quit()`. On KDE Plasma the host also registers a kglobalaccel
+//! action, which `rusty-start setup` binds to the Meta key, and listens for its presses on the
+//! `rusty-start-shortcut` thread. Events arrive on those threads, so `on_event` must hand the work
 //! to the UI thread.
 //!
-//! The interface is served before the host claims its bus name (see `serve_toggle_interface`), so
+//! The interface is served before the host claims its bus name (see `serve_host_interface`), so
 //! the call that started the host through D-Bus activation is queued instead of lost.
 
 use std::sync::{Mutex, PoisonError};
@@ -18,6 +18,7 @@ use rusty_start_protocol::{DBUS_OBJECT_PATH, GLOBAL_SHORTCUT_ACTION_ID};
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::OwnedObjectPath;
 
+use super::TriggerEvent;
 use crate::dbus;
 use crate::setup::SetupItem;
 
@@ -25,12 +26,13 @@ use crate::setup::SetupItem;
 /// tap handled in the window as well would close the menu and reopen it at once.
 pub const MENU_HANDLES_WIN_KEY: bool = false;
 
-static HANDLER: Mutex<Handler> = Mutex::new(Handler { on_toggle: None, queued: false });
+static HANDLER: Mutex<Handler> = Mutex::new(Handler { on_event: None, queued: None });
 
 struct Handler {
-    on_toggle: Option<Box<dyn Fn() + Send>>,
-    /// A toggle arrived before `install`, typically the call that activated the host.
-    queued: bool,
+    on_event: Option<Box<dyn Fn(TriggerEvent) + Send>>,
+    /// An event arrived before `install`, typically the toggle that activated the host. A quit
+    /// is never replaced by a later toggle.
+    queued: Option<TriggerEvent>,
 }
 
 /// The compositor owns the Meta key, so there is nothing to suppress.
@@ -51,27 +53,27 @@ pub struct TriggerGuard {
 
 impl Drop for TriggerGuard {
     fn drop(&mut self) {
-        let _ = self.connection.object_server().remove::<ToggleService, _>(DBUS_OBJECT_PATH);
-        HANDLER.lock().unwrap_or_else(PoisonError::into_inner).on_toggle = None;
+        let _ = self.connection.object_server().remove::<HostService, _>(DBUS_OBJECT_PATH);
+        HANDLER.lock().unwrap_or_else(PoisonError::into_inner).on_event = None;
     }
 }
 
-/// Serves the toggle interface on `connection`. Toggles queue until `install` provides a handler.
+/// Serves the host interface on `connection`. Calls queue until `install` provides a handler.
 /// Must run before the host claims its bus name.
-pub fn serve_toggle_interface(connection: &Connection) -> Result<()> {
-    connection.object_server().at(DBUS_OBJECT_PATH, ToggleService).context("failed to serve the toggle interface")?;
+pub fn serve_host_interface(connection: &Connection) -> Result<()> {
+    connection.object_server().at(DBUS_OBJECT_PATH, HostService).context("failed to serve the host interface")?;
     Ok(())
 }
 
-/// Routes toggles to `on_toggle`, running one first if a toggle was queued. `on_toggle` runs on
-/// zbus's executor thread, not on the UI thread.
-pub fn install(on_toggle: impl Fn() + Send + 'static) -> Result<TriggerGuard> {
+/// Routes events to `on_event`, running a queued one first. `on_event` runs on zbus's executor
+/// thread, not on the UI thread.
+pub fn install(on_event: impl Fn(TriggerEvent) + Send + 'static) -> Result<TriggerGuard> {
     let connection: Connection = dbus::session()?;
     let mut handler = HANDLER.lock().unwrap_or_else(PoisonError::into_inner);
-    if std::mem::take(&mut handler.queued) {
-        on_toggle();
+    if let Some(event) = handler.queued.take() {
+        on_event(event);
     }
-    handler.on_toggle = Some(Box::new(on_toggle));
+    handler.on_event = Some(Box::new(on_event));
     drop(handler);
 
     let shortcut_connection: Connection = connection.clone();
@@ -115,27 +117,28 @@ fn listen_for_global_shortcut(connection: &Connection) -> Result<()> {
         let (_, action, _): (String, String, i64) =
             press.body().deserialize().context("unexpected globalShortcutPressed signal")?;
         if action == GLOBAL_SHORTCUT_ACTION_ID[1] {
-            run_toggle();
+            run_event(TriggerEvent::Toggle);
         }
     }
     bail!("kglobalaccel stopped sending shortcut presses")
 }
 
-fn run_toggle() {
+fn run_event(event: TriggerEvent) {
     let mut handler = HANDLER.lock().unwrap_or_else(PoisonError::into_inner);
-    match &handler.on_toggle {
-        Some(on_toggle) => on_toggle(),
-        None => handler.queued = true,
+    match &handler.on_event {
+        Some(on_event) => on_event(event),
+        None if handler.queued == Some(TriggerEvent::Quit) => {}
+        None => handler.queued = Some(event),
     }
 }
 
-struct ToggleService;
+struct HostService;
 
 #[zbus::interface(name = "io.github.jav76.RustyStart")]
-impl ToggleService {
+impl HostService {
     #[expect(clippy::unused_self, reason = "zbus interface methods take &self; the handler lives in HANDLER")]
     fn toggle(&self) {
-        run_toggle();
+        run_event(TriggerEvent::Toggle);
     }
 
     /// Slint rebuilds the window after every hide without a way to pass an activation token, so
@@ -143,28 +146,34 @@ impl ToggleService {
     #[expect(clippy::unused_self, reason = "zbus interface methods take &self; the handler lives in HANDLER")]
     fn toggle_with_token(&self, token: &str) {
         let _ = token;
-        run_toggle();
+        run_event(TriggerEvent::Toggle);
+    }
+
+    #[expect(clippy::unused_self, reason = "zbus interface methods take &self; the handler lives in HANDLER")]
+    fn quit(&self) {
+        run_event(TriggerEvent::Quit);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rusty_start_protocol::{DBUS_INTERFACE, DBUS_TOGGLE_METHOD, DBUS_TOGGLE_WITH_TOKEN_METHOD};
+    use rusty_start_protocol::{DBUS_INTERFACE, DBUS_QUIT_METHOD, DBUS_TOGGLE_METHOD, DBUS_TOGGLE_WITH_TOKEN_METHOD};
     use zbus::object_server::Interface;
 
     use super::*;
 
     #[test]
     fn interface_name_matches_the_protocol() {
-        assert_eq!(<ToggleService as Interface>::name().as_str(), DBUS_INTERFACE);
+        assert_eq!(<HostService as Interface>::name().as_str(), DBUS_INTERFACE);
     }
 
     #[test]
     fn method_names_match_the_protocol() {
         let mut xml = String::new();
-        ToggleService.introspect_to_writer(&mut xml, 0);
+        HostService.introspect_to_writer(&mut xml, 0);
 
         assert!(xml.contains(&format!("<method name=\"{DBUS_TOGGLE_METHOD}\"")));
         assert!(xml.contains(&format!("<method name=\"{DBUS_TOGGLE_WITH_TOKEN_METHOD}\"")));
+        assert!(xml.contains(&format!("<method name=\"{DBUS_QUIT_METHOD}\"")));
     }
 }

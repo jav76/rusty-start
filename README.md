@@ -73,6 +73,14 @@ cargo run -p rusty-start-host
 Debug builds show a console window for diagnostic output on Windows; release builds do not. Only one
 host runs per session: launching `rusty-start` again toggles the running host's menu and exits.
 
+| Command                 | Effect                                                            |
+| ----------------------- | ----------------------------------------------------------------- |
+| `rusty-start`           | Start the host, or toggle the menu of the host already running    |
+| `rusty-start toggle`    | Toggle the running host's menu (on Linux, start it if needed)     |
+| `rusty-start quit`      | Stop the running host, saving pending settings first              |
+| `rusty-start setup ...` | Desktop integration, see the installing sections below            |
+| `rusty-start --version` | Print the version                                                 |
+
 Known limitation on Windows: clicking the taskbar Start button still opens the native Start menu.
 The Windows key is the supported trigger.
 
@@ -118,20 +126,21 @@ listed in an installed desktop entry; without one the menu opens as Plain Glass.
 
 ## Usage
 
-| Action                                 | Keys or mouse                                                 |
-| -------------------------------------- | ------------------------------------------------------------- |
-| Open or close the menu                 | Tap Win (Meta), or Ctrl+Alt+Space on Windows                  |
-| Search                                 | Type while the menu is open                                   |
-| Move the selection                     | Up and Down                                                   |
-| Launch                                 | Enter, or click a row                                         |
-| Pin or unpin the selected app          | Ctrl+P, or the pin button on a row                            |
-| Show more actions for the selected app | Shift+F10 or the Menu key, or right-click a row               |
-| Run the selected app as administrator  | Ctrl+Shift+Enter (Windows programs only)                      |
-| Power options                          | Power button in the bottom-right corner, or search for them   |
-| Open or close the Settings Page        | Ctrl+, or the gear button in the top-right corner             |
-| Move between settings                  | Tab and Shift+Tab; arrow keys change the focused setting      |
-| Back to the app list                   | Escape on the Settings Page, or the back arrow                |
-| Close                                  | Escape, a click outside the card, or switching to another app |
+| Action                                 | Keys or mouse                                                              |
+| -------------------------------------- | -------------------------------------------------------------------------- |
+| Open or close the menu                 | Tap Win (Meta), or Ctrl+Alt+Space on Windows                               |
+| Search                                 | Type while the menu is open                                                |
+| Move the selection                     | Up and Down                                                                |
+| Launch                                 | Enter, or click a row                                                      |
+| Pin or unpin the selected app          | Ctrl+P, or the pin button on a row                                         |
+| Show more actions for the selected app | Shift+F10 or the Menu key, or right-click a row                            |
+| Run the selected app as administrator  | Ctrl+Shift+Enter (Windows programs only)                                   |
+| Power options                          | Power button in the bottom-right corner, or search for them                |
+| Open or close the Settings Page        | Ctrl+, or the gear button in the top-right corner                          |
+| Move between settings                  | Tab and Shift+Tab; arrow keys change the focused setting                   |
+| Back to the app list                   | Escape on the Settings Page, or the back arrow                             |
+| Close                                  | Escape, a click outside the card, or switching to another app              |
+| Quit the host                          | Quit Rusty Start on the Settings Page (press twice), or `rusty-start quit` |
 
 - Windows shortcuts such as Win+R, Win+E and Win+Shift+S work as usual, with the menu open or closed.
   Right-clicking the Start button (the Win+X menu) is unaffected. On Plasma, Meta shortcuts keep
@@ -184,8 +193,8 @@ was started from and shows a message box when there is none.
 If another application already owns Ctrl+Alt+Space, the host logs a warning and keeps running. Other
 programs can toggle the menu by posting the `RustyStart.ToggleMenu` message to the
 `RustyStart.TriggerWindow` window, after calling `AllowSetForegroundWindow` with the host's process ID
-so the menu can take keyboard focus (see `crates/protocol`). On Linux, call `Toggle()` on the
-session bus:
+so the menu can take keyboard focus, and stop the host by posting `RustyStart.QuitHost` (see
+`crates/protocol`). On Linux, call `Toggle()` or `Quit()` on the session bus:
 
 ```
 busctl --user call io.github.jav76.RustyStart /io/github/jav76/RustyStart io.github.jav76.RustyStart Toggle

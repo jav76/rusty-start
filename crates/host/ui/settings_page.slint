@@ -51,6 +51,7 @@ export component SettingsPage inherits VerticalLayout {
     in property <MetaKeyStatus> meta-key;
     in property <SetupStatus> setup;
     in property <string> meta-key-label: "Meta key opens Rusty Start";
+    in property <string> version;
 
     callback choose-anchor(int);
     callback choose-veil-mode(int);
@@ -58,8 +59,10 @@ export component SettingsPage inherits VerticalLayout {
     callback set-meta-key(bool);
     callback install-setup();
     callback undo-setup();
+    callback quit();
 
     property <bool> confirming-undo: false;
+    property <bool> confirming-quit: false;
 
     // Spare height stays below the last section instead of spreading the sections apart.
     alignment: start;
@@ -265,6 +268,36 @@ export component SettingsPage inherits VerticalLayout {
             color: #c8daf8aa;
             font-size: 12px;
             wrap: word-wrap;
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        SectionLabel {
+            text: "ABOUT";
+            vertical-alignment: center;
+        }
+
+        Text {
+            horizontal-stretch: 1;
+            text: root.version;
+            color: #c8daf8aa;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+
+        GlassButton {
+            text: root.confirming-quit ? "Press again to quit" : "Quit Rusty Start";
+            warning: root.confirming-quit;
+            clicked => {
+                if (root.confirming-quit) {
+                    root.confirming-quit = false;
+                    root.quit();
+                } else {
+                    root.confirming-quit = true;
+                }
+            }
         }
     }
 }

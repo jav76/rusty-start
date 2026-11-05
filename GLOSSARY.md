@@ -22,7 +22,7 @@
   - _Avoid_: window dock, screen gravity.
 - **Veil Mode**: How the area around the Liquid-Glass Card is drawn: the full Fog Veil (blurred and dimmed), Dim (the live desktop dimmed without blur) or Off (the card alone).
   - _Avoid_: backdrop mode, blur toggle.
-- **Settings Page**: The view inside the Liquid-Glass Card, opened with the gear button or Ctrl+,, that replaces the app list with the card position, Veil Mode, blur strength, Meta key switch and Setup Audit.
+- **Settings Page**: The view inside the Liquid-Glass Card, opened with the gear button or Ctrl+,, that replaces the app list with the card position, Veil Mode, blur strength, Meta key switch, Setup Audit, version and Quit button.
   - _Avoid_: settings window, preferences dialog.
 - **Setup Audit**: The per-item report of the desktop integration `rusty-start setup` manages (Meta key binding, KWin window rule, autostart), each installed, missing or in conflict, plus the read-only Windows-key hook status on Windows.
   - _Avoid_: health check, diagnostics.

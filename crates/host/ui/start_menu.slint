@@ -40,6 +40,7 @@ export component StartMenu inherits Window {
     in property <MetaKeyStatus> meta-key;
     in property <string> meta-key-label;
     in property <SetupStatus> setup;
+    in property <string> version;
 
     callback dismiss();
     callback search(string);
@@ -56,6 +57,8 @@ export component StartMenu inherits Window {
     callback set-meta-key(bool);
     callback install-setup();
     callback undo-setup();
+    /// Stops the host.
+    callback quit();
 
     /// Returns to the app list, clears the query, restores the full list and scrolls back to the top.
     public function reset-search() {
@@ -428,6 +431,7 @@ export component StartMenu inherits Window {
                     meta-key: root.meta-key;
                     meta-key-label: root.meta-key-label;
                     setup: root.setup;
+                    version: root.version;
                     choose-anchor(index) => {
                         root.choose-anchor(index);
                     }
@@ -445,6 +449,9 @@ export component StartMenu inherits Window {
                     }
                     undo-setup => {
                         root.undo-setup();
+                    }
+                    quit => {
+                        root.quit();
                     }
                 }
                 }

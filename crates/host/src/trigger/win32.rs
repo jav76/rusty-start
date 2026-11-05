@@ -1,7 +1,7 @@
 //! Windows trigger: a hidden window and low-level keyboard hook on a dedicated thread.
 //!
 //! The window is top-level rather than message-only (`HWND_MESSAGE`) because senders of the toggle
-//! message find it with `FindWindowW`, which skips message-only windows.
+//! and quit messages find it with `FindWindowW`, which skips message-only windows.
 //!
 //! When `use_win_key` is enabled in `config.toml` (the default), the trigger thread also installs a
 //! `WH_KEYBOARD_LL` hook that opens `rusty-start` on a solo Windows-key tap (`VK_LWIN` / `VK_RWIN`
@@ -17,7 +17,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use rusty_start_protocol::{MESSAGE_WINDOW_CLASS, TOGGLE_MESSAGE_NAME};
+use rusty_start_protocol::{MESSAGE_WINDOW_CLASS, QUIT_MESSAGE_NAME, TOGGLE_MESSAGE_NAME};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::RemoteDesktop::{
@@ -37,6 +37,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, PCWSTR};
 
+use super::TriggerEvent;
 use super::win_key_chord::{WinKeyChord, modifiers_held};
 use crate::config::Config;
 use crate::setup::{ItemState, SetupItem};
@@ -143,13 +144,13 @@ impl Drop for TriggerGuard {
     }
 }
 
-/// Starts the trigger thread. `on_toggle` runs on that thread, not on the UI thread.
-pub fn install(on_toggle: impl Fn() + Send + 'static) -> Result<TriggerGuard> {
+/// Starts the trigger thread. `on_event` runs on that thread, not on the UI thread.
+pub fn install(on_event: impl Fn(TriggerEvent) + Send + 'static) -> Result<TriggerGuard> {
     let (ready_sender, ready_receiver) = mpsc::channel::<Result<u32>>();
 
     let thread: JoinHandle<()> = thread::Builder::new()
         .name("rusty-start-trigger".into())
-        .spawn(move || run_trigger_thread(on_toggle, &ready_sender))
+        .spawn(move || run_trigger_thread(on_event, &ready_sender))
         .context("failed to spawn the trigger thread")?;
 
     match ready_receiver.recv() {
@@ -165,7 +166,7 @@ pub fn install(on_toggle: impl Fn() + Send + 'static) -> Result<TriggerGuard> {
     }
 }
 
-fn run_trigger_thread(on_toggle: impl Fn(), ready: &mpsc::Sender<Result<u32>>) {
+fn run_trigger_thread(on_event: impl Fn(TriggerEvent), ready: &mpsc::Sender<Result<u32>>) {
     let mut window: TriggerWindow = match TriggerWindow::create() {
         Ok(window) => window,
         Err(error) => {
@@ -181,11 +182,11 @@ fn run_trigger_thread(on_toggle: impl Fn(), ready: &mpsc::Sender<Result<u32>>) {
     TRIGGER_THREAD_ID.store(thread_id, Ordering::Relaxed);
     let _ = ready.send(Ok(thread_id));
 
-    run_message_loop(&mut window, on_toggle);
+    run_message_loop(&mut window, on_event);
     TRIGGER_THREAD_ID.store(0, Ordering::Relaxed);
 }
 
-fn run_message_loop(window: &mut TriggerWindow, on_toggle: impl Fn()) {
+fn run_message_loop(window: &mut TriggerWindow, on_event: impl Fn(TriggerEvent)) {
     let mut message = MSG::default();
 
     loop {
@@ -199,7 +200,12 @@ fn run_message_loop(window: &mut TriggerWindow, on_toggle: impl Fn()) {
         }
 
         if window.is_toggle_request(&message) {
-            on_toggle();
+            on_event(TriggerEvent::Toggle);
+            continue;
+        }
+
+        if message.message == window.quit_message {
+            on_event(TriggerEvent::Quit);
             continue;
         }
 
@@ -219,6 +225,7 @@ fn run_message_loop(window: &mut TriggerWindow, on_toggle: impl Fn()) {
 struct TriggerWindow {
     hwnd: HWND,
     toggle_message: u32,
+    quit_message: u32,
     keyboard_hook: Option<HHOOK>,
     /// Whether the window receives `WM_WTSSESSION_CHANGE`, so a lock or unlock resets the tap.
     session_notifications: bool,
@@ -228,7 +235,8 @@ struct TriggerWindow {
 
 impl TriggerWindow {
     fn create() -> Result<Self> {
-        let toggle_message: u32 = register_toggle_message()?;
+        let toggle_message: u32 = register_message(TOGGLE_MESSAGE_NAME)?;
+        let quit_message: u32 = register_message(QUIT_MESSAGE_NAME)?;
         let class: WindowClass = WindowClass::register(MESSAGE_WINDOW_CLASS)?;
         let hwnd: HWND = create_hidden_window(&class)?;
 
@@ -238,7 +246,7 @@ impl TriggerWindow {
 
         let keyboard_hook: Option<HHOOK> = if Config::load().use_win_key { install_keyboard_hook() } else { None };
         let session_notifications: bool = register_session_notifications(hwnd);
-        let window = Self { hwnd, toggle_message, keyboard_hook, session_notifications, _class: class };
+        let window = Self { hwnd, toggle_message, quit_message, keyboard_hook, session_notifications, _class: class };
 
         // SAFETY: `window.hwnd` is a live window owned by this thread.
         let hotkey = unsafe {
@@ -458,12 +466,13 @@ fn create_hidden_window(class: &WindowClass) -> Result<HWND> {
     .context("failed to create the trigger window")
 }
 
-fn register_toggle_message() -> Result<u32> {
+fn register_message(name: &str) -> Result<u32> {
     // SAFETY: the argument converts to a valid null-terminated wide string.
-    let message_id: u32 = unsafe { RegisterWindowMessageW(&HSTRING::from(TOGGLE_MESSAGE_NAME)) };
+    let message_id: u32 = unsafe { RegisterWindowMessageW(&HSTRING::from(name)) };
 
     if message_id == 0 {
-        return Err(windows::core::Error::from_thread()).context("failed to register the toggle message");
+        return Err(windows::core::Error::from_thread())
+            .with_context(|| format!("failed to register the {name} message"));
     }
 
     Ok(message_id)

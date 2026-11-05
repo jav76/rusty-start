@@ -18,6 +18,8 @@ pub const DBUS_OBJECT_PATH: &str = "/io/github/jav76/RustyStart";
 /// - `ToggleWithToken(s token)` toggles the menu and uses `token` as the xdg-activation token, so
 ///   the menu can take keyboard focus. A second `rusty-start` launch passes its
 ///   `XDG_ACTIVATION_TOKEN`, or an empty string when it has none.
+/// - `Quit()` stops the host. `rusty-start quit` calls it only when a host owns the bus name, so
+///   the D-Bus service file does not start a host just to stop it.
 pub const DBUS_INTERFACE: &str = "io.github.jav76.RustyStart";
 
 /// kglobalaccel action ID of the global shortcut that toggles the menu on KDE Plasma:
@@ -30,6 +32,9 @@ pub const DBUS_TOGGLE_METHOD: &str = "Toggle";
 
 /// `ToggleWithToken(s token)` method of `DBUS_INTERFACE`.
 pub const DBUS_TOGGLE_WITH_TOKEN_METHOD: &str = "ToggleWithToken";
+
+/// `Quit()` method of `DBUS_INTERFACE`.
+pub const DBUS_QUIT_METHOD: &str = "Quit";
 
 /// Window class of the host's hidden trigger window.
 ///
@@ -46,6 +51,10 @@ pub const MESSAGE_WINDOW_CLASS: &str = "RustyStart.TriggerWindow";
 /// refuses the host's `SetForegroundWindow`, and the menu opens without keyboard focus. The host's
 /// process ID comes from `GetWindowThreadProcessId` on the trigger window.
 pub const TOGGLE_MESSAGE_NAME: &str = "RustyStart.ToggleMenu";
+
+/// Name passed to `RegisterWindowMessageW` to obtain the "stop the host" message ID. Posted like
+/// `TOGGLE_MESSAGE_NAME`; the host saves its pending changes and exits.
+pub const QUIT_MESSAGE_NAME: &str = "RustyStart.QuitHost";
 
 /// Name of the mutex that keeps one host running per session. A launch that finds it already
 /// held toggles the running host's menu and exits.

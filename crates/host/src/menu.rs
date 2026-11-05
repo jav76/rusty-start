@@ -354,6 +354,18 @@ fn queue_apps(apps: Vec<App>) {
     CONTROLLER.with(|cell| cell.borrow_mut().pending_apps = Some(apps));
 }
 
+/// Stops the host: writes the pending settings change, then ends the event loop so `main` returns
+/// and every guard releases its trigger, bus name or mutex. UI thread only.
+pub fn quit() {
+    log::info!("stopping the host");
+    let writer: Option<config::Writer> = CONTROLLER.with(|cell| cell.borrow_mut().config_writer.take());
+    // Dropping the writer joins its thread, so a debounced save lands before the process exits.
+    drop(writer);
+    if let Err(error) = slint::quit_event_loop() {
+        log::error!("failed to stop the event loop: {error}");
+    }
+}
+
 pub fn toggle(start_menu: &StartMenu) {
     let (should_dismiss, recently_deactivated): (bool, bool) = CONTROLLER.with(|cell| {
         let controller = cell.borrow();
