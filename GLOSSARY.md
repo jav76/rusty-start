@@ -14,7 +14,7 @@
   - _Avoid_: popularity, usage score.
 - **Power Flyout**: The panel above the card's power button listing Lock, Sign out, Sleep, Restart and Shut down.
   - _Avoid_: shutdown menu, power menu.
-- **App Action Flyout**: The panel opened from an app row (right-click, the Menu key or Shift+F10) listing what else can be done with that app, such as Open file location, Run as administrator or the app's own desktop actions.
+- **App Action Flyout**: The panel opened from an app row (right-click, the Menu key or Shift+F10) listing what else can be done with that app, such as Pin or Unpin, Open file location, Run as administrator or the app's own desktop actions.
   - _Avoid_: context menu, jump list, right-click menu.
 - **Web Fallback**: The opt-in last search row, below every other result, that opens the query in the user's chosen search engine. Nothing is sent anywhere unless that row is chosen.
   - _Avoid_: web results, web suggestions, Bing search.

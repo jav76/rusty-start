@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
 use anyhow::{Context, Result, bail};
-use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, SIZE, WPARAM};
+use windows::Win32::Foundation::{ERROR_CANCELLED, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, GetDIBits, GetObjectW,
     HBITMAP, HDC, HGDIOBJ,
@@ -23,23 +23,29 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    BHID_EnumItems, FOLDERID_AppsFolder, FOLDERID_CommonPrograms, FOLDERID_Programs, IEnumShellItems, IShellItem,
-    IShellItemImageFactory, KF_FLAG_DEFAULT, SHCNE_CREATE, SHCNE_DELETE, SHCNE_MKDIR, SHCNE_RENAMEFOLDER,
-    SHCNE_RENAMEITEM, SHCNE_RMDIR, SHCNE_UPDATEDIR, SHCNE_UPDATEITEM, SHCNRF_InterruptLevel, SHCNRF_NewDelivery,
-    SHCNRF_RecursiveInterrupt, SHCNRF_SOURCE, SHCNRF_ShellLevel, SHChangeNotification_Lock,
-    SHChangeNotification_Unlock, SHChangeNotifyDeregister, SHChangeNotifyEntry, SHChangeNotifyRegister,
-    SHCreateItemFromParsingName, SHGetKnownFolderIDList, SHGetKnownFolderItem, SIGDN, SIGDN_NORMALDISPLAY,
-    SIGDN_PARENTRELATIVEPARSING, SIIGBF_ICONONLY, ShellExecuteW,
+    BHID_EnumItems, FOLDERID_AppsFolder, FOLDERID_CommonPrograms, FOLDERID_Programs, IEnumShellItems,
+    ILCreateFromPathW, ILFree, IShellItem, IShellItemImageFactory, KF_FLAG_DEFAULT, SEE_MASK_INVOKEIDLIST,
+    SEE_MASK_NOASYNC, SHCNE_CREATE, SHCNE_DELETE, SHCNE_MKDIR, SHCNE_RENAMEFOLDER, SHCNE_RENAMEITEM, SHCNE_RMDIR,
+    SHCNE_UPDATEDIR, SHCNE_UPDATEITEM, SHCNRF_InterruptLevel, SHCNRF_NewDelivery, SHCNRF_RecursiveInterrupt,
+    SHCNRF_SOURCE, SHCNRF_ShellLevel, SHChangeNotification_Lock, SHChangeNotification_Unlock, SHChangeNotifyDeregister,
+    SHChangeNotifyEntry, SHChangeNotifyRegister, SHCreateItemFromParsingName, SHELLEXECUTEINFOW,
+    SHGetKnownFolderIDList, SHGetKnownFolderItem, SHGetKnownFolderPath, SHOpenFolderAndSelectItems, SIGDN,
+    SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING, SIIGBF_ICONONLY, ShellExecuteExW, ShellExecuteW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, HWND_MESSAGE, KillTimer, MSG,
     PostThreadMessageW, RegisterClassExW, SW_SHOWNORMAL, SetTimer, UnregisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE,
     WM_APP, WM_QUIT, WM_TIMER, WNDCLASSEXW,
 };
-use windows::core::{GUID, HSTRING, Interface, Owned, PCWSTR, w};
+use windows::core::{GUID, HSTRING, Interface, Owned, PCWSTR, PWSTR, w};
 
-use super::{App, ICON_SIZE, IconPixels};
+use super::shell_id::{self, ShellFile};
+use super::{App, AppAction, ICON_SIZE, IconPixels};
+
+/// Settings > Apps > Installed apps, where every app can be uninstalled.
+const INSTALLED_APPS_SETTINGS: &str = "ms-settings:appsfeatures";
 
 /// Number of items requested from the enumerator per call.
 const ENUM_BATCH_SIZE: usize = 64;
@@ -231,6 +237,103 @@ pub fn launch(app: &App) {
     }
 }
 
+/// The App Action Flyout entries for `app` (see `shell_id::actions`).
+pub fn actions(app: &App) -> Vec<AppAction> {
+    shell_id::actions(&app.launch_id)
+}
+
+/// Performs one of the `actions` of `app` on a short-lived thread, like `launch`.
+pub fn perform_action(app: &App, action: &AppAction) {
+    let launch_id: String = app.launch_id.clone();
+    let name: String = app.name.clone();
+    let action: AppAction = action.clone();
+
+    let spawned = thread::Builder::new().name("rusty-start-launch".into()).spawn(move || {
+        if let Err(error) = perform(&launch_id, &action) {
+            eprintln!("failed to run {:?} for {name}: {error:#}", action.label());
+        }
+    });
+
+    if let Err(error) = spawned {
+        eprintln!("failed to spawn the launch thread: {error}");
+    }
+}
+
+fn perform(launch_id: &str, action: &AppAction) -> Result<()> {
+    match action {
+        AppAction::RunAsAdministrator => run_as_administrator(launch_id),
+        AppAction::OpenFileLocation => open_file_location(launch_id),
+        AppAction::Uninstall => shell_open(&HSTRING::from(INSTALLED_APPS_SETTINGS)),
+        AppAction::Desktop { .. } => bail!("desktop entry actions exist only on Linux"),
+    }
+}
+
+/// Runs the app elevated through its shell item's `runas` verb, as the built-in Start menu does, so
+/// a shortcut's arguments and working folder still apply. Declining the UAC prompt is not an error.
+fn run_as_administrator(launch_id: &str) -> Result<()> {
+    let _com = ComApartment::initialize()?;
+    let target = HSTRING::from(format!("shell:AppsFolder\\{launch_id}"));
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        // The thread ends right after the call, so the shell must finish before it returns.
+        fMask: SEE_MASK_INVOKEIDLIST | SEE_MASK_NOASYNC,
+        lpVerb: w!("runas"),
+        lpFile: PCWSTR(target.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+
+    // SAFETY: `info` is initialized with its size set, and `target` outlives the call.
+    match unsafe { ShellExecuteExW(&raw mut info) } {
+        Err(error) if error.code() == ERROR_CANCELLED.to_hresult() => Ok(()),
+        result => result.context("ShellExecuteExW failed"),
+    }
+}
+
+/// Opens the program's folder in File Explorer with the program selected.
+fn open_file_location(launch_id: &str) -> Result<()> {
+    let _com = ComApartment::initialize()?;
+    let path = HSTRING::from(file_path(launch_id)?);
+    // SAFETY: `path` is a valid null-terminated wide string.
+    let item = ItemIdList(unsafe { ILCreateFromPathW(&path) });
+    if item.0.is_null() {
+        bail!("{path} no longer exists");
+    }
+
+    // SAFETY: `item` is an absolute ID list. With no child items the shell opens its parent folder
+    // and selects it.
+    unsafe { SHOpenFolderAndSelectItems(item.0, None, 0) }.context("failed to open the folder")
+}
+
+/// Full path of the file `launch_id` names.
+fn file_path(launch_id: &str) -> Result<String> {
+    match shell_id::file(launch_id).context("the app is not listed by file path")? {
+        ShellFile::Absolute(path) => Ok(path.to_owned()),
+        ShellFile::KnownFolder { folder_id, relative } => {
+            let folder_id = GUID::try_from(folder_id).context("the launch ID names an invalid known folder")?;
+            // SAFETY: `folder_id` is a valid GUID, and a `None` token means the current user.
+            let raw: PWSTR = unsafe { SHGetKnownFolderPath(&raw const folder_id, KF_FLAG_DEFAULT, None) }
+                .context("failed to resolve the known folder")?;
+            // SAFETY: SHGetKnownFolderPath returned a valid null-terminated string.
+            let folder = unsafe { raw.to_string() };
+            // SAFETY: the shell allocated the string with CoTaskMemAlloc and it is not used again.
+            unsafe { CoTaskMemFree(Some(raw.0 as *const c_void)) };
+
+            Ok(format!("{}\\{relative}", folder?))
+        }
+    }
+}
+
+/// Absolute item ID list from ILCreateFromPathW, freed on drop.
+struct ItemIdList(*mut ITEMIDLIST);
+
+impl Drop for ItemIdList {
+    fn drop(&mut self) {
+        // SAFETY: the list came from ILCreateFromPathW and is freed once. ILFree accepts null.
+        unsafe { ILFree(Some(self.0.cast_const())) };
+    }
+}
+
 fn shell_open(target: &HSTRING) -> Result<()> {
     // ShellExecute may load shell extensions that require a single-threaded apartment.
     let _com = ComApartment::initialize()?;
@@ -255,7 +358,7 @@ fn read_app(item: &IShellItem) -> Option<App> {
         return None;
     }
 
-    let keywords: Vec<String> = super::exe_keyword(&launch_id).into_iter().collect();
+    let keywords: Vec<String> = shell_id::exe_keyword(&launch_id).into_iter().collect();
     Some(App { name, launch_id, keywords })
 }
 

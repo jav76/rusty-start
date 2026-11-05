@@ -1,5 +1,5 @@
 //! The subset of the freedesktop Desktop Entry specification the menu needs: the `[Desktop Entry]`
-//! group, localized names and keywords, visibility rules and desktop file IDs.
+//! group and its actions, localized names and keywords, visibility rules and desktop file IDs.
 
 use std::path::Path;
 
@@ -22,63 +22,34 @@ pub struct DesktopEntry {
     pub only_show_in: Vec<String>,
     pub not_show_in: Vec<String>,
     pub is_application: bool,
+    /// The app's own actions in the order its `Actions` key lists them.
+    pub actions: Vec<DesktopAction>,
+}
+
+/// One of an app's own actions, from a `[Desktop Action <id>]` group, such as "New Window".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DesktopAction {
+    pub id: String,
+    pub name: String,
+    /// `None` only for D-Bus activatable apps, which run the action over D-Bus.
+    pub exec: Option<String>,
+    pub icon: Option<String>,
 }
 
 impl DesktopEntry {
-    /// Parses the `[Desktop Entry]` group. `locales` lists locale names in preference order (see
-    /// `locale_variants`). Returns `None` when the group or its `Name` is missing.
+    /// Parses the `[Desktop Entry]` group and the action groups it lists. `locales` lists locale
+    /// names in preference order (see `locale_variants`). Returns `None` when the group or its
+    /// `Name` is missing.
     pub fn parse(contents: &str, locales: &[String]) -> Option<Self> {
-        let mut entry = Self::default();
-        let mut in_entry_group: bool = false;
-        let mut saw_entry_group: bool = false;
-        let mut name = Localized::default();
-        let mut generic_name = Localized::default();
-        let mut keywords = Localized::default();
-
-        for raw_line in contents.lines() {
-            let line: &str = raw_line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if line.starts_with('[') {
-                in_entry_group = line == "[Desktop Entry]";
-                saw_entry_group |= in_entry_group;
-                continue;
-            }
-            if !in_entry_group {
-                continue;
-            }
-
-            let Some((raw_key, raw_value)) = line.split_once('=') else {
-                continue;
-            };
-            let value: String = unescape(raw_value.trim());
-            let (key, locale) = split_locale(raw_key.trim());
-
-            match (key, locale) {
-                ("Name", _) => name.offer(value, locale, locales),
-                ("GenericName", _) => generic_name.offer(value, locale, locales),
-                ("Keywords", _) => keywords.offer(value, locale, locales),
-                (_, Some(_)) => {}
-                ("Type", None) => entry.is_application = value == "Application",
-                ("Exec", None) => entry.exec = Some(value),
-                ("Icon", None) => entry.icon = Some(value).filter(|icon| !icon.is_empty()),
-                ("Path", None) => entry.path = Some(value).filter(|path| !path.is_empty()),
-                ("TryExec", None) => entry.try_exec = Some(value).filter(|program| !program.is_empty()),
-                ("Terminal", None) => entry.terminal = value == "true",
-                ("DBusActivatable", None) => entry.dbus_activatable = value == "true",
-                ("NoDisplay", None) => entry.no_display = value == "true",
-                ("Hidden", None) => entry.hidden = value == "true",
-                ("OnlyShowIn", None) => entry.only_show_in = split_list(&value),
-                ("NotShowIn", None) => entry.not_show_in = split_list(&value),
-                _ => {}
-            }
+        let mut parser = Parser::new(locales);
+        for line in contents.lines() {
+            parser.read_line(line.trim());
         }
+        parser.finish()
+    }
 
-        entry.name = name.value.unwrap_or_default();
-        entry.generic_name = generic_name.value.filter(|generic_name| !generic_name.is_empty());
-        entry.keywords = keywords.value.as_deref().map(split_list).unwrap_or_default();
-        (saw_entry_group && !entry.name.is_empty()).then_some(entry)
+    pub fn action(&self, id: &str) -> Option<&DesktopAction> {
+        self.actions.iter().find(|action| action.id == id)
     }
 
     /// Whether the menu lists this entry on a session whose `XDG_CURRENT_DESKTOP` names
@@ -95,6 +66,142 @@ impl DesktopEntry {
             && (self.only_show_in.is_empty() || names_current(&self.only_show_in))
             && !names_current(&self.not_show_in)
             && self.try_exec.as_deref().is_none_or(program_exists)
+    }
+}
+
+/// Line-by-line state of `DesktopEntry::parse`.
+struct Parser<'a> {
+    locales: &'a [String],
+    entry: DesktopEntry,
+    group: Group,
+    saw_entry_group: bool,
+    name: Localized,
+    generic_name: Localized,
+    keywords: Localized,
+    /// Action IDs from the `Actions` key. Action groups it does not list are ignored.
+    action_ids: Vec<String>,
+    action_groups: Vec<ActionGroup>,
+}
+
+#[derive(Clone, Copy)]
+enum Group {
+    Entry,
+    /// An index into `Parser::action_groups`.
+    Action(usize),
+    Other,
+}
+
+#[derive(Default)]
+struct ActionGroup {
+    id: String,
+    name: Localized,
+    exec: Option<String>,
+    icon: Option<String>,
+}
+
+impl<'a> Parser<'a> {
+    fn new(locales: &'a [String]) -> Self {
+        Self {
+            locales,
+            entry: DesktopEntry::default(),
+            group: Group::Other,
+            saw_entry_group: false,
+            name: Localized::default(),
+            generic_name: Localized::default(),
+            keywords: Localized::default(),
+            action_ids: Vec::new(),
+            action_groups: Vec::new(),
+        }
+    }
+
+    fn read_line(&mut self, line: &str) {
+        if line.is_empty() || line.starts_with('#') {
+            return;
+        }
+        if line.starts_with('[') {
+            self.start_group(line);
+            return;
+        }
+
+        let Some((raw_key, raw_value)) = line.split_once('=') else {
+            return;
+        };
+        let value: String = unescape(raw_value.trim());
+        let (key, locale) = split_locale(raw_key.trim());
+        match self.group {
+            Group::Entry => self.read_entry_key(key, locale, value),
+            Group::Action(index) => self.read_action_key(index, key, locale, value),
+            Group::Other => {}
+        }
+    }
+
+    fn start_group(&mut self, header: &str) {
+        self.group = if header == "[Desktop Entry]" {
+            self.saw_entry_group = true;
+            Group::Entry
+        } else if let Some(id) = header.strip_prefix("[Desktop Action ").and_then(|rest| rest.strip_suffix(']')) {
+            self.action_groups.push(ActionGroup { id: id.to_owned(), ..ActionGroup::default() });
+            Group::Action(self.action_groups.len() - 1)
+        } else {
+            Group::Other
+        };
+    }
+
+    fn read_entry_key(&mut self, key: &str, locale: Option<&str>, value: String) {
+        let entry: &mut DesktopEntry = &mut self.entry;
+        match (key, locale) {
+            ("Name", _) => self.name.offer(value, locale, self.locales),
+            ("GenericName", _) => self.generic_name.offer(value, locale, self.locales),
+            ("Keywords", _) => self.keywords.offer(value, locale, self.locales),
+            (_, Some(_)) => {}
+            ("Type", None) => entry.is_application = value == "Application",
+            ("Exec", None) => entry.exec = Some(value),
+            ("Icon", None) => entry.icon = Some(value).filter(|icon| !icon.is_empty()),
+            ("Path", None) => entry.path = Some(value).filter(|path| !path.is_empty()),
+            ("TryExec", None) => entry.try_exec = Some(value).filter(|program| !program.is_empty()),
+            ("Terminal", None) => entry.terminal = value == "true",
+            ("DBusActivatable", None) => entry.dbus_activatable = value == "true",
+            ("NoDisplay", None) => entry.no_display = value == "true",
+            ("Hidden", None) => entry.hidden = value == "true",
+            ("OnlyShowIn", None) => entry.only_show_in = split_list(&value),
+            ("NotShowIn", None) => entry.not_show_in = split_list(&value),
+            ("Actions", None) => self.action_ids = split_list(&value),
+            _ => {}
+        }
+    }
+
+    fn read_action_key(&mut self, index: usize, key: &str, locale: Option<&str>, value: String) {
+        let Some(group) = self.action_groups.get_mut(index) else {
+            return;
+        };
+        match (key, locale) {
+            ("Name", _) => group.name.offer(value, locale, self.locales),
+            ("Exec", None) => group.exec = Some(value),
+            ("Icon", None) => group.icon = Some(value).filter(|icon| !icon.is_empty()),
+            _ => {}
+        }
+    }
+
+    fn finish(self) -> Option<DesktopEntry> {
+        let mut entry: DesktopEntry = self.entry;
+        entry.name = self.name.value.unwrap_or_default();
+        entry.generic_name = self.generic_name.value.filter(|generic_name| !generic_name.is_empty());
+        entry.keywords = self.keywords.value.as_deref().map(split_list).unwrap_or_default();
+
+        let mut action_groups: Vec<ActionGroup> = self.action_groups;
+        entry.actions = self
+            .action_ids
+            .iter()
+            .filter_map(|id| {
+                let position: usize = action_groups.iter().position(|group| group.id == *id)?;
+                let group: ActionGroup = action_groups.swap_remove(position);
+                let name: String = group.name.value.filter(|name| !name.is_empty())?;
+                Some(DesktopAction { id: group.id, name, exec: group.exec, icon: group.icon })
+            })
+            .filter(|action| action.exec.is_some() || entry.dbus_activatable)
+            .collect();
+
+        (self.saw_entry_group && !entry.name.is_empty()).then_some(entry)
     }
 }
 
@@ -216,6 +323,13 @@ Keywords[de]=Kommandozeile;Konsole;
 Exec=konsole
 Icon=utilities-terminal
 OnlyShowIn=KDE;
+Actions=NewWindow;NewTab;
+
+[Desktop Action NewTab]
+Name=Open a New Tab
+Name[de]=Neuer Tab
+Exec=konsole --new-tab
+Icon=tab-new
 
 [Desktop Action NewWindow]
 Name=Open a New Window
@@ -227,7 +341,7 @@ Exec=konsole --new-window
     }
 
     #[test]
-    fn parses_the_desktop_entry_group_and_ignores_actions() {
+    fn action_groups_do_not_override_the_desktop_entry_group() {
         let entry = DesktopEntry::parse(KONSOLE, &[]).expect("valid entry");
 
         assert_eq!(entry.name, "Konsole");
@@ -235,6 +349,54 @@ Exec=konsole --new-window
         assert_eq!(entry.icon.as_deref(), Some("utilities-terminal"));
         assert_eq!(entry.only_show_in, ["KDE"]);
         assert!(entry.is_application);
+    }
+
+    #[test]
+    fn parses_actions_in_the_order_the_actions_key_lists_them() {
+        let entry = DesktopEntry::parse(KONSOLE, &locales("de_DE.UTF-8")).expect("valid entry");
+        let new_window = DesktopAction {
+            id: "NewWindow".to_owned(),
+            name: "Open a New Window".to_owned(),
+            exec: Some("konsole --new-window".to_owned()),
+            icon: None,
+        };
+        let new_tab = DesktopAction {
+            id: "NewTab".to_owned(),
+            name: "Neuer Tab".to_owned(),
+            exec: Some("konsole --new-tab".to_owned()),
+            icon: Some("tab-new".to_owned()),
+        };
+
+        assert_eq!(entry.actions, [new_window, new_tab.clone()]);
+        assert_eq!(entry.action("NewTab"), Some(&new_tab));
+        assert_eq!(entry.action("Missing"), None);
+    }
+
+    #[test]
+    fn skips_unlisted_unnamed_and_unrunnable_actions() {
+        let contents = "\
+[Desktop Entry]
+Type=Application
+Name=Editor
+Exec=editor
+Actions=Unnamed;NoExec;Missing;
+
+[Desktop Action Unnamed]
+Exec=editor --unnamed
+
+[Desktop Action NoExec]
+Name=No Exec
+
+[Desktop Action Unlisted]
+Name=Unlisted
+Exec=editor --unlisted
+";
+        let entry = DesktopEntry::parse(contents, &[]).expect("valid entry");
+        let activatable = DesktopEntry::parse(&contents.replace("Exec=editor\n", "DBusActivatable=true\n"), &[])
+            .expect("valid entry");
+
+        assert_eq!(entry.actions, []);
+        assert_eq!(activatable.actions.iter().map(|action| action.id.as_str()).collect::<Vec<_>>(), ["NoExec"]);
     }
 
     #[test]
