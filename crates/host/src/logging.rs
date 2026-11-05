@@ -158,10 +158,6 @@ fn should_rotate(length: u64, limit: u64) -> bool {
     length > limit
 }
 
-fn unix_seconds() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs())
-}
-
 fn format_line(
     level: Level,
     target: &str,
@@ -178,14 +174,26 @@ fn format_line(
 
 /// Formats seconds since the Unix epoch as `2026-11-02T14:03:07Z`, without a date dependency.
 pub fn format_utc(unix_secs: u64) -> String {
+    let (year, month, day, hour, minute, second) = utc_parts(unix_secs);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// Formats seconds since the Unix epoch as `20261102-140307`: the same instant in a form every file
+/// system accepts in a file name.
+pub fn file_stamp(unix_secs: u64) -> String {
+    let (year, month, day, hour, minute, second) = utc_parts(unix_secs);
+    format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}")
+}
+
+/// Seconds since the Unix epoch, for the stamps above.
+pub fn unix_seconds() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs())
+}
+
+fn utc_parts(unix_secs: u64) -> (u64, u64, u64, u64, u64, u64) {
     let (date, seconds_of_day) = (unix_secs / 86_400, unix_secs % 86_400);
     let (year, month, day) = civil_from_days(date);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        seconds_of_day / 3600,
-        seconds_of_day % 3600 / 60,
-        seconds_of_day % 60
-    )
+    (year, month, day, seconds_of_day / 3600, seconds_of_day % 3600 / 60, seconds_of_day % 60)
 }
 
 /// Howard Hinnant's `civil_from_days`, for days since 1970-01-01.
@@ -312,6 +320,12 @@ mod tests {
         assert_eq!(format_utc(1_762_092_187), "2025-11-02T14:03:07Z");
         assert_eq!(format_utc(951_782_400), "2000-02-29T00:00:00Z");
         assert_eq!(format_utc(4_102_444_799), "2099-12-31T23:59:59Z");
+    }
+
+    #[test]
+    fn file_stamps_hold_the_same_instant_without_separators_file_names_reject() {
+        assert_eq!(file_stamp(1_762_092_187), "20251102-140307");
+        assert!(!file_stamp(1_762_092_187).contains(':'));
     }
 
     #[test]

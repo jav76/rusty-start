@@ -1,8 +1,6 @@
 //! Windows session and power calls. Restart, shut down and sleep need `SeShutdownPrivilege`,
 //! which standard accounts hold but have disabled, so it is enabled on the process token first.
 
-use std::thread;
-
 use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::{ERROR_NOT_ALL_ASSIGNED, GetLastError, HANDLE, LUID};
 use windows::Win32::Security::{
@@ -24,20 +22,8 @@ pub fn available() -> Vec<PowerAction> {
     PowerAction::ALL.to_vec()
 }
 
-/// Runs `action` on a short-lived thread, because suspending blocks until the computer wakes.
-pub fn perform(action: PowerAction) {
-    let spawned = thread::Builder::new().name("rusty-start-power".into()).spawn(move || {
-        if let Err(error) = run(action) {
-            log::error!("failed to {}: {error:#}", action.label().to_lowercase());
-        }
-    });
-
-    if let Err(error) = spawned {
-        log::error!("failed to spawn the power action thread: {error}");
-    }
-}
-
-fn run(action: PowerAction) -> Result<()> {
+/// Performs `action`. Blocks while suspended, so `power::perform` calls it off the UI thread.
+pub fn run(action: PowerAction) -> Result<()> {
     match action {
         // SAFETY: LockWorkStation has no preconditions.
         PowerAction::Lock => unsafe { LockWorkStation() }.context("failed to lock the workstation"),

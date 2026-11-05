@@ -184,6 +184,11 @@ Linux):
 On Linux the Meta key binding belongs to the desktop, so `use_win_key` has no effect there; use the
 Settings Page switch, `rusty-start setup` or `rusty-start setup --undo` instead.
 
+Saving keeps the comments and any keys the host does not know, so hand edits survive; unknown keys
+and invalid values are logged and ignored. If `config.toml` or `usage.tsv` cannot be read, the host
+moves it to `<name>.broken-<timestamp>` in the same folder, logs why, and starts over rather than
+overwriting it.
+
 Pins and launch history are saved to `usage.tsv` in the same folder. The host and `rusty-start setup`
 log warnings and errors to `rusty-start.log` there as well as to stderr, moving it to
 `rusty-start.log.1` once it passes 1 MiB; a panic is recorded there too. Set `RUSTY_START_LOG=debug`

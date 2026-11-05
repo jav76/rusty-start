@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 
-use crate::config;
+use crate::{config, persist};
 
 const FILE_NAME: &str = "usage.tsv";
 const FORMAT_VERSION: &str = "1";
@@ -160,19 +160,29 @@ fn file_path() -> Result<PathBuf> {
     config::data_dir().map(|dir| dir.join(FILE_NAME)).context("failed to determine the configuration directory")
 }
 
-/// Reads `usage.tsv`. A missing file is an empty history.
+/// Reads `usage.tsv`. A missing file is an empty history. A file that cannot be read or parsed is
+/// moved aside with `config::set_aside` and a new history starts; only when even that fails does
+/// this return an error, so the caller can keep the file by not saving.
 pub fn load() -> Result<Usage> {
     let path: PathBuf = file_path()?;
 
-    match fs::read_to_string(&path) {
-        Ok(contents) => Usage::parse(&contents).context("failed to parse usage.tsv"),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(Usage::default()),
-        Err(error) => Err(error).context("failed to read usage.tsv"),
-    }
+    let failure: anyhow::Error = match fs::read_to_string(&path) {
+        Ok(contents) => match Usage::parse(&contents) {
+            Ok(usage) => return Ok(usage),
+            Err(error) => error.context("failed to parse usage.tsv"),
+        },
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Usage::default()),
+        Err(error) => anyhow::Error::new(error).context("failed to read usage.tsv"),
+    };
+    let moved_to: PathBuf = config::set_aside(&path).with_context(|| format!("{failure:#}"))?;
+    log::error!("{failure:#}; it was moved to {} and a new history starts", moved_to.display());
+    Ok(Usage::default())
 }
 
 enum Message {
     Save(String),
+    /// Reply once everything queued so far is on disk, for a session that is about to end.
+    Flush(Sender<()>),
     Stop,
 }
 
@@ -193,6 +203,8 @@ impl Writer {
             .spawn(move || run_writer(&path, &receiver))
             .context("failed to spawn the usage writer thread")?;
 
+        let flush_sender: Sender<Message> = sender.clone();
+        persist::register(move || flush(&flush_sender));
         Ok(Self { sender, thread: Some(thread) })
     }
 
@@ -212,13 +224,33 @@ impl Drop for Writer {
     }
 }
 
+/// Waits until the writer has written everything queued before the call, for at most
+/// `persist::FLUSH_TIMEOUT`. A writer that has already stopped has nothing pending.
+fn flush(sender: &Sender<Message>) {
+    let (reply, done) = mpsc::channel::<()>();
+    if sender.send(Message::Flush(reply)).is_ok() {
+        let _ = done.recv_timeout(persist::FLUSH_TIMEOUT);
+    }
+}
+
 fn run_writer(path: &Path, receiver: &Receiver<Message>) {
-    while let Ok(Message::Save(mut contents)) = receiver.recv() {
+    loop {
+        let mut contents: String = match receiver.recv() {
+            Ok(Message::Save(contents)) => contents,
+            Ok(Message::Flush(reply)) => {
+                let _ = reply.send(());
+                continue;
+            }
+            Ok(Message::Stop) | Err(_) => break,
+        };
+
         // Only the newest snapshot matters when saves queue up behind a slow disk.
-        let mut stop = false;
+        let mut stop: bool = false;
+        let mut flush_replies: Vec<Sender<()>> = Vec::new();
         while let Ok(message) = receiver.try_recv() {
             match message {
                 Message::Save(newer) => contents = newer,
+                Message::Flush(reply) => flush_replies.push(reply),
                 Message::Stop => {
                     stop = true;
                     break;
@@ -228,6 +260,9 @@ fn run_writer(path: &Path, receiver: &Receiver<Message>) {
 
         if let Err(error) = write_replacing(path, &contents) {
             log::error!("failed to save usage.tsv: {error:#}");
+        }
+        for reply in flush_replies {
+            let _ = reply.send(());
         }
         if stop {
             break;

@@ -32,14 +32,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, HC_ACTION, HHOOK,
     KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLKHF_UP, MSG, PostMessageW, PostThreadMessageW, RegisterClassExW,
     RegisterWindowMessageW, SetWindowsHookExW, UnhookWindowsHookEx, UnregisterClassW, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_WTSSESSION_CHANGE,
-    WNDCLASSEXW, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
+    WINDOW_STYLE, WM_APP, WM_ENDSESSION, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_QUERYENDSESSION, WM_QUIT, WM_SYSKEYDOWN,
+    WM_SYSKEYUP, WM_WTSSESSION_CHANGE, WNDCLASSEXW, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
 };
 use windows::core::{HSTRING, PCWSTR};
 
 use super::TriggerEvent;
 use super::win_key_chord::{WinKeyChord, modifiers_held};
 use crate::config::Config;
+use crate::persist;
 use crate::setup::{ItemState, SetupItem};
 
 /// The low-level hook does not see keys while the menu has keyboard focus, so the menu window
@@ -244,7 +245,8 @@ impl TriggerWindow {
             cell.set(HookState { hwnd, toggle_message, chord: WinKeyChord::new() });
         });
 
-        let keyboard_hook: Option<HHOOK> = if Config::load().use_win_key { install_keyboard_hook() } else { None };
+        let keyboard_hook: Option<HHOOK> =
+            if Config::load().config.use_win_key { install_keyboard_hook() } else { None };
         let session_notifications: bool = register_session_notifications(hwnd);
         let window = Self { hwnd, toggle_message, quit_message, keyboard_hook, session_notifications, _class: class };
 
@@ -478,10 +480,16 @@ fn register_message(name: &str) -> Result<u32> {
     Ok(message_id)
 }
 
-/// Window procedure. Trigger messages are handled in `run_message_loop`; a session lock or unlock
+/// Window procedure. Trigger messages are handled in `run_message_loop`. A session lock or unlock
 /// resets the tap tracker here, on the trigger thread that owns it, because the key releases that
-/// happened on the lock screen were never delivered to the hook.
+/// happened on the lock screen were never delivered to the hook. Sign-out and shutdown announce
+/// themselves to this top-level window, which is the host's chance to write pending saves.
 extern "system" fn window_procedure(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if message == WM_QUERYENDSESSION || message == WM_ENDSESSION {
+        persist::flush_all();
+        // TRUE for WM_QUERYENDSESSION lets the session end; WM_ENDSESSION expects 0.
+        return LRESULT(isize::from(message == WM_QUERYENDSESSION));
+    }
     if message == WM_WTSSESSION_CHANGE && matches!(wparam.0 as u32, WTS_SESSION_LOCK | WTS_SESSION_UNLOCK) {
         HOOK_STATE.with(|cell| {
             let mut state = cell.get();

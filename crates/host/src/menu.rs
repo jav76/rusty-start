@@ -83,11 +83,19 @@ impl MenuController {
     fn new() -> Self {
         let monitor_rect =
             backdrop::active_monitor_rect().unwrap_or(MonitorRect { x: 0, y: 0, width: 1440, height: 900 });
-        Self {
-            config: Config::load(),
-            config_writer: config::Writer::spawn()
+        let loaded: config::Loaded = Config::load();
+        let config_writer: Option<config::Writer> = match loaded.saving {
+            config::Saving::Allowed => config::Writer::spawn()
                 .inspect_err(|error| log::error!("settings changes will not be saved: {error:#}"))
                 .ok(),
+            config::Saving::Blocked(reason) => {
+                log::error!("settings changes will not be saved: {reason}");
+                None
+            }
+        };
+        Self {
+            config: loaded.config,
+            config_writer,
             capturer: backdrop::Capturer::default(),
             glass_state: Rc::new(RefCell::new(GlassState::default())),
             monitor_rect,

@@ -195,7 +195,8 @@ impl AppList {
         self.refresh();
     }
 
-    /// Keeps pins and launches in memory only, so an unreadable usage file is never overwritten.
+    /// Keeps pins and launches in memory only, for a usage file that could neither be read nor
+    /// moved aside, so it is never overwritten.
     pub fn disable_saving(&self) {
         self.state.borrow_mut().writer = None;
     }

@@ -13,6 +13,7 @@ mod glass;
 mod instance;
 mod logging;
 mod menu;
+mod persist;
 mod power;
 mod search;
 mod settings;
