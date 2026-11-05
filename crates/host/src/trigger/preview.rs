@@ -19,7 +19,7 @@ pub fn install(on_toggle: impl Fn() + Send + 'static) -> anyhow::Result<TriggerG
 
 /// Logs the change; the preview has no Windows-key hook to install.
 pub fn set_win_key(enabled: bool) {
-    eprintln!("preview: the Windows key would {} the menu", if enabled { "open" } else { "no longer open" });
+    log::info!("preview: the Windows key would {} the menu", if enabled { "open" } else { "no longer open" });
 }
 
 /// Stand-in rows, so the Setup section shows the read-only states the Windows-key hook row takes.

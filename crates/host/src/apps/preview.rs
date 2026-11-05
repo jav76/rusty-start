@@ -58,7 +58,7 @@ fn placeholder_icon(name: &str) -> IconPixels {
 }
 
 pub fn launch(app: &App) {
-    eprintln!("preview mode: would launch {}", app.name);
+    log::info!("preview mode: would launch {}", app.name);
 }
 
 /// Sample App Action Flyout entries mixing what both platforms offer.
@@ -74,7 +74,7 @@ pub fn actions(app: &App) -> Vec<AppAction> {
 }
 
 pub fn perform_action(app: &App, action: &AppAction) {
-    eprintln!("preview mode: would run {:?} for {}", action.label(), app.name);
+    log::info!("preview mode: would run {:?} for {}", action.label(), app.name);
 }
 
 /// Placeholder guard so the host's startup code is identical on every platform.

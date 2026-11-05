@@ -49,7 +49,7 @@ pub fn set_applet_popup_role(window: &Window) {
                 Ok(Some(shell)) => Probe::Available(ManuallyDrop::new(shell)),
                 Ok(None) => Probe::Unavailable,
                 Err(error) => {
-                    eprintln!("failed to connect to the Plasma shell protocol: {error:#}");
+                    log::warn!("failed to connect to the Plasma shell protocol: {error:#}");
                     Probe::Unavailable
                 }
             };
@@ -57,7 +57,7 @@ pub fn set_applet_popup_role(window: &Window) {
         if let Probe::Available(shell) = &mut *probe
             && let Err(error) = shell.set_role(window)
         {
-            eprintln!("failed to give the menu window the applet popup role: {error:#}");
+            log::warn!("failed to give the menu window the applet popup role: {error:#}");
         }
     });
 }

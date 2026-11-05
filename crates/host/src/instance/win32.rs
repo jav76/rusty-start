@@ -40,7 +40,7 @@ pub fn acquire() -> Result<Option<InstanceGuard>> {
 fn toggle_running_instance() {
     // SAFETY: the class name converts to a valid null-terminated wide string.
     let Ok(hwnd) = (unsafe { FindWindowW(&HSTRING::from(MESSAGE_WINDOW_CLASS), PCWSTR::null()) }) else {
-        eprintln!("Rusty Start is already running but its trigger window was not found");
+        log::error!("Rusty Start is already running but its trigger window was not found");
         return;
     };
 
@@ -54,7 +54,7 @@ fn toggle_running_instance() {
 
     // SAFETY: `hwnd` is the running host's trigger window and the message is registered.
     if let Err(error) = unsafe { PostMessageW(Some(hwnd), toggle_message, WPARAM(0), LPARAM(0)) } {
-        eprintln!("failed to ask the running Rusty Start to toggle: {error}");
+        log::error!("failed to ask the running Rusty Start to toggle: {error}");
     }
 }
 

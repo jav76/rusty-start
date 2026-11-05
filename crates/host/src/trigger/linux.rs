@@ -77,11 +77,11 @@ pub fn install(on_toggle: impl Fn() + Send + 'static) -> Result<TriggerGuard> {
     let shortcut_connection: Connection = connection.clone();
     let spawned = thread::Builder::new().name("rusty-start-shortcut".into()).spawn(move || {
         if let Err(error) = listen_for_global_shortcut(&shortcut_connection) {
-            eprintln!("the KDE global shortcut is unavailable: {error:#}");
+            log::warn!("the KDE global shortcut is unavailable: {error:#}");
         }
     });
     if let Err(error) = spawned {
-        eprintln!("failed to spawn the global shortcut thread: {error}");
+        log::error!("failed to spawn the global shortcut thread: {error}");
     }
     Ok(TriggerGuard { connection })
 }

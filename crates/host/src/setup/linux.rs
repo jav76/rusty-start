@@ -264,7 +264,7 @@ fn reconfigure_kwin() {
             .context("KWin did not reload its configuration")
     });
     if let Err(error) = reloaded {
-        eprintln!("{error:#}; the change applies after you log in again");
+        log::warn!("{error:#}; the change applies after you log in again");
     }
 }
 
@@ -274,11 +274,11 @@ fn reconfigure_kwin() {
 fn refresh_service_cache() {
     match Command::new("kbuildsycoca6").output() {
         Ok(output) if !output.status.success() => {
-            eprintln!("kbuildsycoca6 failed; desktop entry changes apply after you log in again");
+            log::warn!("kbuildsycoca6 failed; desktop entry changes apply after you log in again");
         }
         Ok(_) => {}
         Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => eprintln!("failed to run kbuildsycoca6: {error}"),
+        Err(error) => log::warn!("failed to run kbuildsycoca6: {error}"),
     }
 }
 

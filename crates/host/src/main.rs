@@ -10,6 +10,7 @@ mod config;
 mod dbus;
 mod glass;
 mod instance;
+mod logging;
 mod menu;
 mod power;
 mod search;
@@ -19,18 +20,33 @@ mod trace;
 mod trigger;
 mod usage;
 
+use std::process::ExitCode;
+
 use slint::ComponentHandle;
 
 slint::include_modules!();
 
-fn main() -> anyhow::Result<()> {
+fn main() -> ExitCode {
+    let _log: Option<logging::LogGuard> = logging::init();
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            logging::report_failure(&error);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> anyhow::Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if let Some(("setup", setup_arguments)) = arguments.split_first().map(|(first, rest)| (first.as_str(), rest)) {
-        return setup::run(setup_arguments);
+        let report: String = setup::run(setup_arguments)?;
+        logging::print_report(&report);
+        return Ok(());
     }
 
     let Some(_instance): Option<instance::InstanceGuard> = instance::acquire()? else {
-        eprintln!("Rusty Start is already running; toggled its menu instead");
+        log::info!("Rusty Start is already running; toggled its menu instead");
         return Ok(());
     };
 
@@ -39,14 +55,14 @@ fn main() -> anyhow::Result<()> {
     menu::connect_callbacks(&start_menu);
     menu::load_apps_in_background(&start_menu)?;
     let _app_watcher: Option<apps::AppWatcher> = menu::watch_apps(&start_menu)
-        .inspect_err(|error| eprintln!("installed apps will not refresh until restart: {error:#}"))
+        .inspect_err(|error| log::warn!("installed apps will not refresh until restart: {error:#}"))
         .ok();
 
     let weak_menu: slint::Weak<StartMenu> = start_menu.as_weak();
     let _trigger: trigger::TriggerGuard = trigger::install(move || {
         let queued = weak_menu.upgrade_in_event_loop(|start_menu| menu::toggle(&start_menu));
         if let Err(error) = queued {
-            eprintln!("failed to queue a menu toggle: {error}");
+            log::error!("failed to queue a menu toggle: {error}");
         }
     })?;
 

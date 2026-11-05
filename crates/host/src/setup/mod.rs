@@ -110,9 +110,9 @@ pub struct MetaKeyState {
     pub detail: String,
 }
 
-/// Runs `rusty-start setup` with the arguments that follow `setup`.
-#[expect(clippy::print_stdout, reason = "setup is a command-line tool that reports each change")]
-pub fn run(arguments: &[String]) -> Result<()> {
+/// Runs `rusty-start setup` with the arguments that follow `setup`, and returns the report to
+/// print: the Setup Audit for `--check`, otherwise every change made.
+pub fn run(arguments: &[String]) -> Result<String> {
     let mut options = Options::default();
     let mut reverse: bool = false;
     let mut check: bool = false;
@@ -121,29 +121,30 @@ pub fn run(arguments: &[String]) -> Result<()> {
             "--dev" => options.dev = true,
             "--undo" => reverse = true,
             "--check" => check = true,
-            "--help" | "-h" => {
-                eprintln!("{USAGE}");
-                return Ok(());
-            }
+            "--help" | "-h" => return Ok(USAGE.to_owned()),
             other => bail!("unknown setup option {other:?}\n{USAGE}"),
         }
     }
 
     if check {
-        let items: Vec<SetupItem> = audit()?;
-        println!("{}", summarize(&items).label());
-        for item in &items {
-            println!("  {:<11} {}: {}", format!("{:?}", item.state), item.label, item.detail);
-        }
-        return Ok(());
+        return Ok(audit_report(&audit()?));
     }
 
     let mut changes: Vec<String> = Vec::new();
     let result: Result<()> = if reverse { undo(options, &mut changes) } else { apply(options, &mut changes) };
-    for change in &changes {
-        println!("{change}");
+    let report: String = changes.join("\n");
+    match result {
+        Ok(()) => Ok(report),
+        // The changes made before the failure still need reporting, so they travel with the error.
+        Err(error) if report.is_empty() => Err(error),
+        Err(error) => Err(error.context(report)),
     }
-    result
+}
+
+fn audit_report(items: &[SetupItem]) -> String {
+    let lines =
+        items.iter().map(|item| format!("  {:<11} {}: {}", format!("{:?}", item.state), item.label, item.detail));
+    std::iter::once(summarize(items).label().to_owned()).chain(lines).collect::<Vec<String>>().join("\n")
 }
 
 #[cfg(test)]
@@ -176,6 +177,19 @@ mod tests {
     fn a_desktop_with_nothing_to_manage_is_unavailable() {
         assert_eq!(summarize(&items(&[ItemState::Unavailable])), SetupSummary::Unavailable);
         assert_eq!(summarize(&[]), SetupSummary::Unavailable);
+    }
+
+    #[test]
+    fn the_audit_report_lists_the_summary_then_each_item() {
+        let audit = vec![
+            SetupItem::new("Meta key", ItemState::Installed, "opens Rusty Start"),
+            SetupItem::new("Autostart", ItemState::Missing, "not installed"),
+        ];
+
+        assert_eq!(
+            audit_report(&audit),
+            "Partly installed\n  Installed   Meta key: opens Rusty Start\n  Missing     Autostart: not installed"
+        );
     }
 
     #[test]

@@ -45,11 +45,11 @@ pub fn available() -> Vec<PowerAction> {
 pub fn perform(action: PowerAction) {
     let spawned = thread::Builder::new().name("rusty-start-power".into()).spawn(move || {
         if let Err(error) = run(action) {
-            eprintln!("failed to {}: {error:#}", action.label().to_lowercase());
+            log::error!("failed to {}: {error:#}", action.label().to_lowercase());
         }
     });
     if let Err(error) = spawned {
-        eprintln!("failed to spawn the power action thread: {error}");
+        log::error!("failed to spawn the power action thread: {error}");
     }
 }
 
@@ -70,7 +70,7 @@ fn capabilities() -> Capabilities {
     *CAPABILITIES.get_or_init(|| {
         let session_manager: Option<SessionManager> = probe_session_manager();
         let logind: Option<Connection> =
-            dbus::system().inspect_err(|error| eprintln!("power actions need logind: {error:#}")).ok();
+            dbus::system().inspect_err(|error| log::warn!("power actions need logind: {error:#}")).ok();
         let can = |method: &str| logind.as_ref().is_some_and(|connection| logind_allows(connection, method));
         Capabilities {
             session_manager,

@@ -3714,6 +3714,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "glow",
+ "log",
  "png",
  "resvg",
  "rustix 1.1.5",

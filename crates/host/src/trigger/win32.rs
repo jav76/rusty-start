@@ -81,7 +81,7 @@ pub fn set_win_key(enabled: bool) {
     // SAFETY: PostThreadMessageW has no memory-safety preconditions.
     let posted = unsafe { PostThreadMessageW(thread_id, SET_WIN_KEY_MESSAGE, WPARAM(usize::from(enabled)), LPARAM(0)) };
     if let Err(error) = posted {
-        eprintln!("failed to change the Windows-key hook: {error}");
+        log::error!("failed to change the Windows-key hook: {error}");
     }
 }
 
@@ -302,7 +302,7 @@ impl TriggerWindow {
 
         // Not fatal: the hotkey is a development convenience and the toggle message still works.
         if let Err(error) = hotkey {
-            eprintln!("Ctrl+Alt+Space is unavailable, likely taken by another application: {error}");
+            log::warn!("Ctrl+Alt+Space is unavailable, likely taken by another application: {error}");
         }
 
         Ok(window)
@@ -318,7 +318,7 @@ impl TriggerWindow {
             (false, Some(hook)) => {
                 // SAFETY: `hook` was installed on this thread by `install_keyboard_hook`.
                 if let Err(error) = unsafe { UnhookWindowsHookEx(hook) } {
-                    eprintln!("failed to remove the Windows-key hook: {error}");
+                    log::error!("failed to remove the Windows-key hook: {error}");
                 }
                 self.keyboard_hook = None;
                 HookStatus::Off.store(&WIN_KEY_HOOK);
@@ -358,7 +358,7 @@ fn install_keyboard_hook() -> Option<HHOOK> {
             Some(hook)
         }
         Err(error) => {
-            eprintln!("failed to install the Windows-key hook, falling back to Ctrl+Alt+Space: {error}");
+            log::warn!("failed to install the Windows-key hook, falling back to Ctrl+Alt+Space: {error}");
             HookStatus::Failed.store(&WIN_KEY_HOOK);
             None
         }
