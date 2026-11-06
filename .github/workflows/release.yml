@@ -15,9 +15,58 @@ env:
 # Every target is built on the project's self-hosted x86_64 Linux runner: arm64 Linux is cross-linked
 # against Debian's multiarch libraries, and Windows is cross-compiled with cargo-xwin. None of the
 # cross builds are run in CI.
+#
+# `create` checks the tag against Cargo.toml and CHANGELOG.md and opens one draft release with the
+# changelog section as its notes; the build jobs upload into it; `publish` adds SHA256SUMS over
+# every asset and takes the release out of draft, so a half-built release is never public.
 jobs:
+  create:
+    name: Create the draft release
+    runs-on: [self-hosted, Linux, X64, rusty-start]
+    container: debian:bookworm
+    steps:
+      - name: Install tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git gh
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check the tag against Cargo.toml and the changelog
+        run: |
+          version="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+          grep -q "^## \[$version\]" CHANGELOG.md || {
+            echo "CHANGELOG.md has no '## [$version]' section"
+            exit 1
+          }
+          # The section body, up to the next version heading.
+          awk -v heading="## [$version]" '
+            index($0, heading) == 1 { active = 1; next }
+            /^## / { active = 0 }
+            active { print }
+          ' CHANGELOG.md > notes.md
+          echo "Release notes:"
+          cat notes.md
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          # A re-run of the workflow finds the draft from the first run.
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --draft $prerelease --verify-tag \
+                 --title "$GITHUB_REF_NAME" --notes-file notes.md
+
   linux:
     name: Linux ${{ matrix.arch }}
+    needs: create
     strategy:
       matrix:
         include:
@@ -61,22 +110,29 @@ jobs:
         run: |
           cargo install cargo-deb --version "$CARGO_DEB_VERSION" --locked
           cargo deb -p rusty-start-host --no-build --target ${{ matrix.target }} --output target/dist/
+          # A pre-release suffix must sort below the final version in apt: 0.2.0~beta.1-1 < 0.2.0-1.
+          version="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          expected="$(printf '%s' "$version" | tr - '~')-1"
+          actual="$(dpkg-deb -f target/dist/*.deb Version)"
+          if [ "$actual" != "$expected" ]; then
+            echo "the .deb version is $actual, expected $expected"
+            exit 1
+          fi
           staging="rusty-start-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
           mkdir -p "target/dist/$staging"
           cp target/${{ matrix.target }}/release/rusty-start packaging/linux/* README.md LICENSE "target/dist/$staging/"
           tar -C target/dist -czf "target/dist/$staging.tar.gz" "$staging"
 
-      - name: Publish
+      - name: Upload
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          # Every build job tries to create the release; the later ones find it exists.
-          gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag || true
           gh release upload "$GITHUB_REF_NAME" target/dist/*.deb target/dist/*.tar.gz --clobber
 
   windows:
     name: Windows ${{ matrix.arch }}
+    needs: create
     strategy:
       matrix:
         include:
@@ -122,10 +178,33 @@ jobs:
           cp target/${{ matrix.target }}/release/rusty-start.exe README.md LICENSE "target/dist/$staging/"
           (cd target/dist && zip -r "$staging.zip" "$staging")
 
-      - name: Publish
+      - name: Upload
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag || true
           gh release upload "$GITHUB_REF_NAME" target/dist/*.zip --clobber
+
+  publish:
+    name: Checksums and publish
+    needs: [linux, windows]
+    runs-on: [self-hosted, Linux, X64, rusty-start]
+    container: debian:bookworm
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Install tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates gh
+
+      - name: Add SHA256SUMS over every asset and publish
+        run: |
+          mkdir assets
+          cd assets
+          gh release download "$GITHUB_REF_NAME"
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false
