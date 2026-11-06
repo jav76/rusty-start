@@ -122,7 +122,11 @@ runs Install and Undo (Undo asks for a second press). On other desktops, bind a 
 
 Running from a build directory (`cargo run`), add `--dev`: `rusty-start setup --dev` also installs a
 hidden desktop entry for the current executable. KWin only shares desktop snapshots with executables
-listed in an installed desktop entry; without one the menu opens as Plain Glass.
+listed in an installed desktop entry; without one the menu opens as Plain Glass. That entry in
+`~/.local/share/applications` masks the packaged one, so after installing the `.deb` run
+`rusty-start setup` from `/usr/bin/rusty-start`: it removes a development entry that points at
+another build. The Setup Audit's "Snapshot authorization" row names the build the effective entry
+authorizes, and its "Desktop snapshots" row reports what the latest capture came to.
 
 ## Usage
 

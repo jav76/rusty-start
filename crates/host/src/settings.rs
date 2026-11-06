@@ -11,7 +11,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::config::{CardAnchor, Config, MAX_VEIL_BLUR, VeilMode};
 use crate::setup::{self, ItemState, MetaKeyState, Options, SetupItem, SetupSummary};
-use crate::{MetaKeyStatus, SetupRow, SetupState, SetupStatus, StartMenu, menu, trigger};
+use crate::{MetaKeyStatus, SetupRow, SetupState, SetupStatus, StartMenu, backdrop, menu, trigger};
 
 const META_KEY_LABEL: &str =
     if setup::OWNS_META_KEY { "Meta key opens Rusty Start" } else { "Windows key opens Rusty Start" };
@@ -163,7 +163,7 @@ fn perform(task: SetupTask) -> SetupReport {
 
     SetupReport {
         audit: setup::audit(),
-        runtime: trigger::status_items(),
+        runtime: trigger::status_items().into_iter().chain(backdrop::status_items()).collect(),
         meta_key: setup::OWNS_META_KEY.then(setup::meta_key),
         message,
     }

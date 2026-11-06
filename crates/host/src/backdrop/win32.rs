@@ -214,6 +214,11 @@ pub fn prepare_overlay_surface(_window: &slint::Window) {}
 /// Windows only honours this when the host may take the foreground: it received the hotkey or the
 /// last input event, or the sender of the toggle message called `AllowSetForegroundWindow` for it
 /// (see `rusty_start_protocol::TOGGLE_MESSAGE_NAME`). Returns whether the overlay is now foreground.
+/// GDI capture has no authorization to report, so the Windows audit has no snapshot row.
+pub fn status_items() -> Vec<crate::setup::SetupItem> {
+    Vec::new()
+}
+
 pub fn focus_overlay_window() -> bool {
     let Some(hwnd) = find_overlay_hwnd_on_current_thread() else {
         return false;

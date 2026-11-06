@@ -8,6 +8,7 @@ use slint::{PhysicalPosition, PhysicalSize};
 use super::MonitorRect;
 pub use super::synthetic::Capturer;
 use super::synthetic::SYNTHETIC_MONITOR_RECT;
+use crate::setup::{ItemState, SetupItem};
 
 /// The preview window keeps the size it is given.
 pub const OVERLAY_FOLLOWS_WINDOW_SIZE: bool = false;
@@ -39,4 +40,9 @@ pub fn prepare_overlay_surface(_window: &slint::Window) {}
 
 pub fn focus_overlay_window() -> bool {
     true
+}
+
+/// Stand-in row, so the Setup section shows where the desktop snapshot status appears.
+pub fn status_items() -> Vec<SetupItem> {
+    vec![SetupItem::new("Desktop snapshots", ItemState::Installed, "synthetic backdrop (preview)")]
 }

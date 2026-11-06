@@ -50,13 +50,17 @@ pub fn apply(options: Options, changes: &mut Vec<String>) -> Result<()> {
         "autostart",
         changes,
     )?;
+    let development_entry: PathBuf = development_entry_path()?;
     if options.dev {
         write_marked_file(
-            &development_entry_path()?,
+            &development_entry,
             &values::desktop_entry(&executable, EntryKind::Development),
             "the development desktop entry, so KWin authorizes desktop snapshots for this build",
             changes,
         )?;
+    } else if marked_entry_runs_another_build(&development_entry, &executable) {
+        // The user entry masks the packaged one, so KWin would refuse this build's snapshots.
+        remove_marked_file(&development_entry, "the development desktop entry for another build", changes)?;
     }
     refresh_service_cache();
 
@@ -85,8 +89,9 @@ pub fn undo(options: Options, changes: &mut Vec<String>) -> Result<()> {
 pub fn audit() -> Result<Vec<SetupItem>> {
     let executable: PathBuf = env::current_exe().context("failed to find the running executable")?;
     let mut items: Vec<SetupItem> = Vec::new();
+    let on_plasma: bool = is_plasma();
 
-    if is_plasma() {
+    if on_plasma {
         let proxy: Proxy<'static> = kglobalaccel()?;
         items.push(if values::has_meta(&shortcut_keys(&proxy, GLOBAL_SHORTCUT_ACTION_ID)?) {
             SetupItem::new("Meta key", ItemState::Installed, "opens Rusty Start")
@@ -111,7 +116,37 @@ pub fn audit() -> Result<Vec<SetupItem>> {
     if development_entry.exists() {
         items.push(entry_item("Development entry", &development_entry, &executable, EntryKind::Development));
     }
+    if on_plasma {
+        let entry: Option<String> = effective_desktop_entry(&development_entry);
+        let (state, detail) = values::snapshot_authorization(&executable, entry.as_deref());
+        items.push(SetupItem::new("Snapshot authorization", state, detail));
+    }
     Ok(items)
+}
+
+/// The desktop entry the service cache resolves for the app ID: the user's own, which masks every
+/// other, or the first one along `XDG_DATA_DIRS`. KWin authorizes snapshots from that entry's
+/// executable only.
+fn effective_desktop_entry(user_entry: &Path) -> Option<String> {
+    if let Ok(contents) = fs::read_to_string(user_entry) {
+        return Some(contents);
+    }
+    let data_dirs: String = env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|dirs| !dirs.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".to_owned());
+    data_dirs
+        .split(':')
+        .filter(|dir| !dir.is_empty())
+        .find_map(|dir| fs::read_to_string(Path::new(dir).join("applications").join(format!("{APP_ID}.desktop"))).ok())
+}
+
+fn marked_entry_runs_another_build(path: &Path, executable: &Path) -> bool {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return false;
+    };
+    contents.lines().any(|line| line == SETUP_MARKER)
+        && values::entry_exec(&contents).is_some_and(|program| Path::new(&program) != executable)
 }
 
 fn entry_item(label: &'static str, path: &Path, executable: &Path, kind: EntryKind) -> SetupItem {
