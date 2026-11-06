@@ -1,11 +1,11 @@
 # Roadmap to 1.0
 
-The plan from the current alphas to a published v1.0.0, as of 2026-11-04. The [project board](https://github.com/users/jav76/projects/3) is the source of truth for status. This page records the order, the gates and the reasons. `#N` is an issue or pull request. `Fxx` is an entry in the [feature catalog](feature-catalog.md) that is not filed as an issue yet.
+The plan from the current alphas to a published v1.0.0, as of 2026-11-06. The [project board](https://github.com/users/jav76/projects/3) is the source of truth for status. This page records the order, the gates and the reasons. `#N` is an issue or pull request. `Fxx` is an entry in the [feature catalog](feature-catalog.md) that is not filed as an issue yet.
 
 ## Where things stand
 
-- Two unsigned alphas are out (v0.1.0-alpha.1 and v0.1.1-alpha.1): Windows x64 and arm64 `.zip`, Linux amd64 and arm64 `.deb` and `.tar.gz`. Both report version 0.1.0 to Cargo and apt, so apt never upgraded between them.
-- The App Action Flyout (#21) and six stacked PRs (#22-#27) make up v0.2.0-beta.1: a log file and panic reports, `--version`/`--help`/`toggle`/`quit`, safer config and usage saves, a snapshot authorization audit, and a prerelease flow with checksums and a changelog.
+- Three unsigned alphas are out (v0.1.0-alpha.1, v0.1.1-alpha.1 and v0.1.2-alpha.1): Windows x64 and arm64 `.zip`, Linux amd64 and arm64 `.deb` and `.tar.gz`. The first two report version 0.1.0 to Cargo and apt, so apt never upgraded between them; v0.1.2-alpha.1 is the first whose package version (0.1.2~alpha.1-1) sorts above them.
+- v0.1.2-alpha.1 ships the App Action Flyout (#21) and the six stacked PRs (#22-#27): a log file and panic reports, `--version`/`--help`/`toggle`/`quit`, safer config and usage saves, a snapshot authorization audit, and a prerelease flow with checksums and a changelog. v0.2.0-beta.1 still waits on the Slint attribution, tag gating and the hand checks on #28.
 - Windows code is linted by cross-target clippy, but its tests and the shipped `.exe` never run in CI.
 - Shipped archives carry no third-party license notices, and the Slint royalty-free attribution is missing (the license asks for `AboutSlint` in an About screen or the Made with Slint badge on the download page).
 - Several paths leave users with no working Win or Meta key: Windows removing the hook after a stall, Explorer or kglobalacceld restarting, and quitting or upgrading the host on Plasma.

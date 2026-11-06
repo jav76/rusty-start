@@ -8,7 +8,7 @@ section as the release notes.
 
 ## [Unreleased]
 
-## [0.2.0-beta.1] - 2026-11-03
+## [0.1.2-alpha.1] - 2026-11-06
 
 ### Added
 
