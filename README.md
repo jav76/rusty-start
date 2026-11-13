@@ -253,6 +253,7 @@ standards for contributors and coding agents.
 | `docs/adr`        | Architecture Decision Records                                                                |
 | `docs/roadmap.md` | Milestones, release procedure and publishing plan to 1.0                                    |
 | `docs/feature-catalog.md` | Candidate features and enhancements, with priority and milestone                     |
+| `docs/release-candidate-guide.md` | What ships today, what blocks the release candidate, and how each publishing channel gets stood up |
 | `packaging/linux` | Desktop entry and D-Bus service file installed by the `.deb`                                 |
 | `AGENTS.md`       | Coding standards and workflow rules for contributors and coding agents                       |
 
