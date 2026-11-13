@@ -1,3 +1,7 @@
 /target
 graphify-out/
 *.zip
+
+# Internal design decisions stay out of the public repository.
+/docs/adr/
+/docs/internal/

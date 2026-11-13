@@ -250,7 +250,6 @@ standards for contributors and coding agents.
 | `crates/host`     | Resident process: Liquid-Glass GPU shaders, desktop capture, Slint UI, triggers, app search, pins and power actions |
 | `crates/protocol` | Window class, message names, mutex name and D-Bus names shared by the host and programs that toggle it |
 | `GLOSSARY.md`     | Domain terminology such as the Fog Veil, Liquid-Glass Card, Card Anchor and Frecency          |
-| `docs/adr`        | Architecture Decision Records                                                                |
 | `docs/roadmap.md` | Milestones, release procedure and publishing plan to 1.0                                    |
 | `docs/feature-catalog.md` | Candidate features and enhancements, with priority and milestone                     |
 | `docs/release-candidate-guide.md` | What ships today, what blocks the release candidate, and how each publishing channel gets stood up |

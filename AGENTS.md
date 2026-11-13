@@ -34,7 +34,6 @@ cargo test -p rusty-start-host --profile budget --locked -- --ignored
 | `crates/host`              | Resident process: Slint UI, GPU shaders, triggers, app index, search |
 | `crates/host/ui`           | Slint markup, compiled by `build.rs`                                  |
 | `crates/protocol`          | Names shared by the host and the programs that toggle it              |
-| `docs/adr`                 | Architecture Decision Records                                         |
 | `packaging/linux`          | Desktop entry and D-Bus service file the `.deb` installs              |
 | `GLOSSARY.md`              | Domain terms. Use them in code, comments and docs                     |
 
@@ -165,8 +164,9 @@ This project exists to be faster than the built-in Start menu. Treat latency as 
 
 - Keep `README.md` in sync with behavior, controls and configuration. Add new domain terms to
   `GLOSSARY.md`.
-- Record hard-to-reverse decisions (new process boundaries, injection strategy, rendering
-  pipeline, file formats) as `docs/adr/NNNN-short-title.md`.
+- Hard-to-reverse decisions (new process boundaries, injection strategy, rendering pipeline,
+  file formats) are recorded as `docs/adr/NNNN-short-title.md`, which is gitignored: design
+  decisions stay out of the public repository. Never force-add files under `docs/adr`.
 - Write concise, practical prose. No em-dashes: use hyphens, colons or separate sentences.
 - Commit messages use Conventional Commits: `feat(host): ...`, `fix(protocol): ...`, `docs: ...`,
   with a scope matching the crate. The summary is imperative and under 72 characters.
