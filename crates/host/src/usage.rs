@@ -1,5 +1,5 @@
 //! Pinned apps and launch history, keyed by launch ID and saved to `usage.tsv` next to
-//! `config.toml`. The file format is described in `docs/adr/0003-usage-file-format.md`.
+//! `config.toml`. The file format is described on `Usage::parse`.
 //!
 //! `Usage` is platform independent and touches no disk. `load` and `Writer` do the I/O and must
 //! stay off the UI thread.
